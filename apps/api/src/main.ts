@@ -21,8 +21,10 @@ async function bootstrap() {
   const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173').split(',').map(v => v.trim()).filter(Boolean);
   app.enableCors({ origin: allowedOrigins, credentials: true });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
-  const config = new DocumentBuilder().setTitle('POS Colombia API').setDescription('API del sistema POS').setVersion('1.0').addBearerAuth().build();
-  SwaggerModule.setup('api/docs', app, SwaggerModule.createDocument(app, config));
+  if (process.env.NODE_ENV !== 'production' || process.env.ENABLE_SWAGGER === 'true') {
+    const config = new DocumentBuilder().setTitle('POS Colombia API').setDescription('API del sistema POS').setVersion('1.0').addBearerAuth().build();
+    SwaggerModule.setup('api/docs', app, SwaggerModule.createDocument(app, config));
+  }
   await app.listen(process.env.PORT || 3000);
 }
 bootstrap();

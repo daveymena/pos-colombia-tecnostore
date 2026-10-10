@@ -1,14 +1,24 @@
-FROM node:20-alpine
+FROM node:20-alpine AS build
 WORKDIR /app
-COPY package*.json ./
-RUN npm install --no-audit --no-fund
-COPY . .
+COPY package.json ./
+COPY prisma ./prisma
+RUN npm install --include=dev --no-audit --no-fund
 RUN npx prisma generate
+COPY . .
 RUN npm run build
-RUN mkdir -p /app/uploads
+
+FROM node:20-alpine AS production
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package.json ./
+COPY prisma ./prisma
+RUN npm install --omit=dev --no-audit --no-fund \
+  && npx prisma generate \
+  && mkdir -p /app/uploads
+COPY --from=build /app/dist ./dist
+ENV UPLOADS_DIR=/app/uploads
 VOLUME /app/uploads
-ENV UPLOADS_DIR=/app/uploads NODE_ENV=production
 EXPOSE 3000
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=8s --start-period=30s --retries=3 \
   CMD node -e "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
 CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main"]

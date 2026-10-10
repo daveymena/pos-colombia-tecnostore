@@ -3,7 +3,7 @@ import {
   LayoutDashboard, ShoppingCart, Package, Users, Boxes, FileText, LogOut, Search, Plus,
   RefreshCw, CircleDollarSign, TrendingUp, AlertTriangle, Menu, X, Truck, Wallet,
   ClipboardList, RotateCcw, Receipt, ChartNoAxesCombined, Settings, ShieldCheck, ArrowLeftRight,
-  Building2, UserCog, Tags, Landmark, BadgeDollarSign, History, CheckCircle2, Printer, Download, Upload, FileDown,
+  Building2, UserCog, Tags, Landmark, BadgeDollarSign, History, CheckCircle2, Printer, Download, Upload, FileDown, Sparkles,
 } from 'lucide-react';
 
 const API = (import.meta as any).env.VITE_API_URL || 'http://localhost:3000/api';
@@ -317,6 +317,7 @@ export default function App() {
       <div className="sidebar-scroll">{Array.from(new Set(sections.map(s=>s.group))).map(group=><div key={group}><p className="nav-label">{group}</p>{sections.filter(s=>s.group===group).map(s=>{const Icon=s.icon;return <button key={s.name} className={`nav-item ${section===s.name?'active':''}`} onClick={()=>{setSection(s.name);setMobileMenu(false);setSearch('');setError('');setNotice('')}}><Icon size={17}/><span>{s.label}</span></button>;})}</div>)}</div>
       <div className="sidebar-bottom"><div className="user-mini"><div className="avatar">{user.name.slice(0,1)}</div><div className="mini-user-text"><b>{user.name}</b><small>{roleNames[user.role]||user.role}</small></div></div><button className="nav-item" onClick={logout}><LogOut size={18}/>Cerrar sesión</button></div>
     </aside>
+    {mobileMenu&&<button className="mobile-nav-scrim" aria-label="Cerrar menú" onClick={()=>setMobileMenu(false)} />}
     <main className="main-area"><header className="topbar"><button className="icon-btn mobile-only" onClick={()=>setMobileMenu(true)}><Menu/></button><div className="breadcrumb"><span className="muted small">POS Colombia /</span><b> {section}</b></div><div className="top-actions"><span className="status"><span className="green-dot"></span> API conectada si responde</span><button className="icon-btn" onClick={refresh} title="Actualizar datos"><RefreshCw size={17}/></button><div className="avatar">{user.name.slice(0,1)}</div></div></header>
       <div className="content">
         {error&&<div className="error banner">{error}<button onClick={()=>setError('')} aria-label="Cerrar error">×</button></div>}
@@ -356,7 +357,15 @@ function ModuleView({page,data,rows,search,setSearch,openCreate,openAction,colum
   const [localMessage,setLocalMessage]=useState('');
   const importRef = React.useRef<HTMLInputElement>(null);
   const uploadRef = React.useRef<HTMLInputElement>(null);
+  const inventoryImportRef = React.useRef<HTMLInputElement>(null);
   const [uploadRow,setUploadRow]=useState<any>(null);
+  const [inventoryPreview,setInventoryPreview]=useState<any>(null);
+  const [inventoryAiStatus,setInventoryAiStatus]=useState<any>(null);
+  const [inventoryAiResult,setInventoryAiResult]=useState<any>(null);
+  const [inventoryAiError,setInventoryAiError]=useState('');
+  useEffect(()=>{
+    if(page==='Inventario') request('/inventory/ai/status').then(setInventoryAiStatus).catch(()=>setInventoryAiStatus({configured:false}));
+  },[page,request]);
   async function importCsv(file:File) {
     setLocalBusy(true);setLocalMessage('');
     try {
@@ -378,6 +387,33 @@ function ModuleView({page,data,rows,search,setSearch,openCreate,openAction,colum
     } catch(e:any) { setLocalMessage(e.message||'No se pudo subir la imagen.'); }
     finally { setLocalBusy(false); setUploadRow(null); if(uploadRef.current) uploadRef.current.value=''; }
   }
+  async function previewInventoryFile(file:File) {
+    setLocalBusy(true);setLocalMessage('');setInventoryPreview(null);
+    try {
+      const form = new FormData(); form.append('file',file);
+      const result = await uploadFile('/inventory/import/preview',form);
+      setInventoryPreview(result);
+    } catch(e:any) { setLocalMessage(e.message||'No se pudo leer el archivo de inventario.'); }
+    finally { setLocalBusy(false); if(inventoryImportRef.current) inventoryImportRef.current.value=''; }
+  }
+  async function applyInventoryFile() {
+    if(!inventoryPreview) return;
+    const validRows = inventoryPreview.rows.filter((row:any)=>row.valid);
+    if(!validRows.length) return;
+    setLocalBusy(true);setLocalMessage('');
+    try {
+      const result = await request('/inventory/import/apply',{method:'POST',body:JSON.stringify({rows:validRows,note:`Conteo importado: ${inventoryPreview.filename}`})});
+      setLocalMessage(`Conteo aplicado: ${result.changed} saldo(s) ajustado(s), ${result.unchanged} sin cambio. Referencia ${result.importId}.`);
+      setInventoryPreview(null); await loadPage(page); await loadPage('Dashboard');
+    } catch(e:any) { setLocalMessage(e.message||'No se pudo aplicar el conteo.'); }
+    finally { setLocalBusy(false); }
+  }
+  async function runInventoryAi() {
+    setLocalBusy(true);setInventoryAiError('');setInventoryAiResult(null);
+    try { setInventoryAiResult(await request('/inventory/ai/insights',{method:'POST',body:'{}'})); }
+    catch(e:any) { setInventoryAiError(e.message||'El asistente no está disponible.'); }
+    finally { setLocalBusy(false); }
+  }
   const headers=columns[page]||[];
   const tableRows=Array.isArray(rows)?rows:[];
   const isTable=Array.isArray(data) || ['Usuarios','Sucursales','Caja','Cuentas por cobrar','Cuentas por pagar','Auditoría','Movimientos','Traslados','Devoluciones proveedor','Devoluciones','Ventas','Inventario','Compras','Productos','Clientes','Proveedores','Categorías','Gastos'].includes(page);
@@ -393,6 +429,25 @@ function ModuleView({page,data,rows,search,setSearch,openCreate,openAction,colum
   function cellValue(row:any,col:any) { const value=nested(row,col.key); if(col.money)return money(value);if(col.date)return shortDate(value);if(typeof value==='boolean')return value?'Sí':'No';return showValue(value); }
   return <><div className="page-heading"><div><p className="eyebrow">{title.eyebrow}</p><h1>{title.title}</h1><p className="muted">{title.desc}</p></div><div className="heading-actions">{page==='Caja'&&<button className="secondary" onClick={()=>openAction('cashMovement',page,{})}><Plus size={16}/> Movimiento de caja</button>}{canCreate&&<button className="primary" onClick={()=>openCreate(page)}><Plus size={16}/>{page==='Caja'?'Abrir caja':page==='Inventario'?'Ajustar stock':page==='Compras'?'Nueva compra':page==='Gastos'?'Registrar gasto':'Nuevo registro'}</button>}{page==='Configuración'&&<button className="primary" onClick={onSettings}><Settings size={16}/> Editar empresa</button>}<button className="secondary" onClick={()=>loadPage(page)}><RefreshCw size={16}/> Actualizar</button></div></div>
     {localMessage&&<div className="success-banner"><CheckCircle2 size={16}/>{localMessage}<button onClick={()=>setLocalMessage('')}>Cerrar</button></div>}
+    {page==='Inventario'&&<>
+      <section className="panel inventory-tools">
+        <div className="inventory-tools-copy"><div className="inventory-tools-icon"><Boxes size={20}/></div><div><h3>Conteo físico y archivos</h3><p className="muted small">Importa Excel, Word o texto. Revisas las diferencias antes de tocar existencias.</p></div></div>
+        <div className="inventory-tool-actions">
+          <input ref={inventoryImportRef} type="file" accept=".xlsx,.docx,.csv,.txt,.tsv,.json" hidden onChange={e=>{const f=e.target.files?.[0];if(f)previewInventoryFile(f);}}/>
+          <button className="primary" disabled={localBusy} onClick={()=>inventoryImportRef.current?.click()}><Upload size={16}/>{localBusy?'Leyendo…':'Importar conteo'}</button>
+          <div className="export-buttons"><span className="small muted">Exportar</span>{(['xlsx','docx','txt'] as const).map(f=><button key={f} className="secondary compact-format" disabled={localBusy} onClick={async()=>{try{await downloadFile(`/inventory/export?format=${f}`,`inventario-conteo.${f}`);}catch(e:any){setLocalMessage(e.message||'No se pudo exportar el inventario.');}}}>{f==='xlsx'?'Excel':f==='docx'?'Word':'Texto'}</button>)}</div>
+          <button className="secondary ai-button" disabled={localBusy||!inventoryAiStatus?.configured} title={inventoryAiStatus?.configured?'Analiza rotación, mínimos y riesgos sin cambiar stock':'Configura el puente OpenCode en el servidor para habilitar IA'} onClick={runInventoryAi}><Sparkles size={16}/>{localBusy?'Analizando…':'Análisis IA'}</button>
+        </div>
+        {!inventoryAiStatus?.configured&&<p className="field-help inventory-ai-hint">IA pendiente de configuración del puente OpenCode en EasyPanel. La importación y el resto del POS funcionan sin IA.</p>}
+      </section>
+      {inventoryPreview&&<section className="panel inventory-preview">
+        <div className="panel-head"><div><h3>Vista previa del conteo</h3><p className="muted small">{inventoryPreview.filename} · {inventoryPreview.valid} válidas · {inventoryPreview.invalid} con error. Nada se ha guardado todavía.</p></div><button className="text-btn" onClick={()=>setInventoryPreview(null)}>Descartar</button></div>
+        <div className="table-wrap"><table><thead><tr><th>Fila</th><th>SKU / producto</th><th>Sucursal / bodega</th><th>Actual</th><th>Contado</th><th>Diferencia</th><th>Revisión</th></tr></thead><tbody>{inventoryPreview.rows.map((row:any)=><tr key={`${row.line}-${row.sku}`}><td>{row.line}</td><td><b>{row.sku||'—'}</b><small className="preview-product-name">{row.productName||''}</small></td><td>{row.branchName||'—'} / {row.warehouseName||'—'}</td><td>{row.expectedQuantity??'—'}</td><td>{row.countedQuantity??'—'}</td><td>{row.delta===undefined?'—':Number(row.delta)>0?`+${row.delta}`:row.delta}</td><td>{row.valid?<span className="pill green">Lista</span>:<span className="pill danger-pill">{row.error}</span>}</td></tr>)}</tbody></table></div>
+        <div className="preview-footer"><p className="field-help">Se aplicarán solo filas válidas; las filas con error se omiten. Si un saldo cambia después de esta vista previa, se cancela toda la operación y deberás importar de nuevo.</p><button className="primary" disabled={localBusy||inventoryPreview.valid===0} onClick={applyInventoryFile}><CheckCircle2 size={16}/>{localBusy?'Aplicando…':`Aplicar ${inventoryPreview.valid} filas válidas`}</button></div>
+      </section>}
+      {inventoryAiError&&<div className="error banner">{inventoryAiError}<button onClick={()=>setInventoryAiError('')}>Cerrar</button></div>}
+      {inventoryAiResult&&<section className="panel inventory-ai-result"><div className="panel-head"><div><p className="eyebrow">ASISTENTE DE INVENTARIO · SOLO LECTURA</p><h3>Oportunidades y alertas</h3></div><button className="text-btn" onClick={()=>setInventoryAiResult(null)}>Cerrar</button></div><div className="ai-metrics"><span>{inventoryAiResult.metrics?.inventoryRows} referencias</span><span>Valor costo {money(inventoryAiResult.metrics?.inventoryCostValueCOP)}</span><span>{inventoryAiResult.metrics?.belowMinimumCount} en mínimo o por debajo</span></div><p className="ai-analysis">{inventoryAiResult.analysis}</p><p className="field-help">La IA propone; no modifica productos, compras ni existencias.</p></section>}
+    </>}
     {page==='Configuración'&&data&&!Array.isArray(data)&&<section className="panel company-details"><div className="company-initial">{(data.name||'N').slice(0,1)}</div><div className="company-info"><h2>{data.name||'Empresa sin nombre'}</h2><p>{data.taxId||'NIT sin configurar'} · {data.currency||'COP'} · {data.timezone||'America/Bogota'}</p><p>{data.email||'Correo pendiente'} · {data.phone||'Teléfono pendiente'}</p><p>{data.address||'Dirección pendiente'}</p></div></section>}
     {page==='Facturación electrónica'&&<section className="panel invoice-status"><div className="invoice-icon"><FileText size={25}/></div><div><span className="pill warning">{data?.status||'NOT_CONFIGURED'}</span><h2>Integración no configurada</h2><p>{data?.message||'Debe configurarse un proveedor autorizado, credenciales, numeración y entorno de pruebas antes de emitir documentos fiscales.'}</p><p className="field-help">Esta versión no genera ni valida facturas electrónicas DIAN. Los recibos POS comerciales no reemplazan una factura electrónica validada.</p></div></section>}
     {page==='Reportes'&&data&&!Array.isArray(data)&&<><div className="stat-grid"><StatCard label="Ventas brutas" value={money(data.grossSales)}/><StatCard label="Devoluciones" value={money(data.returns)}/><StatCard label="Ventas netas" value={money(data.netSales)}/><StatCard label="Costo de ventas" value={money(data.costOfSales)}/><StatCard label="Utilidad bruta" value={money(data.grossProfit)}/><StatCard label="Gastos" value={money(data.expenses)}/><StatCard label="Compras" value={money(data.purchases)}/><StatCard label="Valor inventario" value={money(data.inventoryValue)}/></div><div className="two-col"><section className="panel"><div className="panel-head"><div><h3>Ventas por día</h3><p className="muted small">Últimos 30 días por defecto</p></div></div>{(data.dailySales||[]).length?<div className="bar-chart">{(data.dailySales||[]).slice(-30).map((x:any)=><div className="bar-column" key={x.date} title={`${x.date}: ${money(x.total)}`}><div className="bar" style={{height:`${Math.max(5,(Number(x.total)/Math.max(1,...data.dailySales.map((z:any)=>Number(z.total))))*100)}%`}}></div><span>{String(x.date).slice(5)}</span></div>)}</div>:<Empty text="Aún no hay datos de ventas."/>}</section><section className="panel"><div className="panel-head"><div><h3>Ventas por método de pago</h3><p className="muted small">Importes registrados en transacciones</p></div></div>{(data.paymentTotals||[]).map((x:any)=><div className="low-row" key={x.method}><div className="grow"><b>{x.method}</b><small>Medio de pago</small></div><strong>{money(x.amount)}</strong></div>)}</section></div><section className="panel"><div className="panel-head"><h3>Productos más vendidos</h3></div><div className="table-wrap"><table><thead><tr><th>Producto</th><th>SKU</th><th>Cantidad</th><th>Valor línea</th></tr></thead><tbody>{(data.topProducts||[]).map((x:any,i:number)=><tr key={x.productId}><td>{x.product?.name||'Producto'}</td><td>{x.product?.sku||'—'}</td><td>{Number(x._sum?.quantity||0)}</td><td>{money(x._sum?.lineTotal)}</td></tr>)}</tbody></table></div></section></>}

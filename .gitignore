@@ -5,3 +5,4 @@ dist
 apps/api/dist
 apps/web/dist
 apps/api/uploads
+.playwright-cli

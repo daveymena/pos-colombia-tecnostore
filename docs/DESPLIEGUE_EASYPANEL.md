@@ -9,6 +9,12 @@ Tiempo estimado: 30–45 minutos.
 - [ ] Servidor con EasyPanel instalado y dominio apuntando a su IP (ej. `pos.tudominio.com`, `api.tudominio.com`).
 - [ ] Clave JWT de 32+ caracteres: `openssl rand -base64 36`.
 
+### Si EasyPanel muestra “Cannot access repository or branch main doesn't exist”
+
+El repositorio `daveymena/pos-colombia-tecnostore` es privado, pero GitHub confirma que la rama `main` existe. Autoriza **EasyPanel** en GitHub: **Settings → Applications → Installed GitHub Apps → EasyPanel → Configure → Repository access → Only select repositories → añade `pos-colombia-tecnostore`**. Después vuelve a EasyPanel, reconecta la integración GitHub y selecciona owner `daveymena`, repo `pos-colombia-tecnostore`, branch `main`. No hagas público el repo.
+
+Si el formulario usa Git URL en vez de la integración, usa `https://github.com/daveymena/pos-colombia-tecnostore.git` y configura en EasyPanel un token fine-grained de solo lectura (Contents: Read-only). No pegues ese token en el repositorio, en variables `VITE_*` ni en el chat.
+
 ## 1. Base de datos (servicio gestionado de EasyPanel)
 
 1. En EasyPanel: **Services → + Service → PostgreSQL 16**.
@@ -29,6 +35,10 @@ Tiempo estimado: 30–45 minutos.
    - `CORS_ORIGIN` = `https://pos.tudominio.com`
    - `UPLOADS_DIR` = `/app/uploads`
    - `NODE_ENV` = `production`
+   - `OPENCODE_API_URL` = `https://opencode.ai/zen/v1` (o URL interna del puente OpenAI-compatible)
+   - `OPENCODE_API_KEY` = clave de OpenCode Zen guardada como secreto en EasyPanel; vacío deshabilita IA
+   - `OPENCODE_MODEL` = `deepseek-v4-flash-free` u otro ID gratuito habilitado en la cuenta
+   - `ENABLE_SWAGGER` = `false` (predeterminado; solo actívalo temporalmente si necesitas la documentación)
 4. **Mounts → + Volume**: nombre `pos_uploads`, ruta `/app/uploads` (las fotos de productos sobreviven a cada despliegue).
 5. Deploy. La propia imagen ejecuta `prisma migrate deploy` al arrancar y expone `GET /api/health`.
 
@@ -54,6 +64,17 @@ Crea 11 categorías, 22 productos con IVA 19%, stock inicial, sucursal, bodega, 
 3. Build Arg: `VITE_API_URL=https://api.tudominio.com/api` (se fija al compilar; si cambias el dominio de la API, reconstruye).
 4. Deploy y abre el dominio: el login ya NO trae credenciales de prueba (solo aparecen en desarrollo local).
 
+## Importación y exportación de inventario
+
+- En **Inventario → Importar conteo**, admite `.xlsx`, `.docx`, `.csv`, `.txt`, `.tsv` y `.json` (máx. 10 MB).
+- Muestra una vista previa de stock actual, conteo físico, diferencia y errores. Solo aplica las filas válidas después de confirmar; si el stock cambió mientras revisabas, rechaza todo el lote y pide importar de nuevo.
+- Exporta Excel, Word, texto tabulado, CSV o JSON. Edita `cantidadContada` y conserva `sku`, `bodega`/`sucursal` y `warehouseId` al reimportar.
+- Cada cambio crea un movimiento de ajuste auditado `CONTEO-*`; nunca sobrescribe stock sin registrar el kardex.
+
+## Asistente de inventario con OpenCode
+
+Cuando estén configuradas las variables del puente, **Inventario → Análisis IA** analiza mínimos, valor al costo y salidas de los últimos 30 días. Envía datos agregados de producto e inventario, sin información de clientes ni credenciales. Es de solo lectura: no crea compras ni modifica productos o existencias. Si el proveedor falla o no tiene clave, el POS sigue funcionando sin IA.
+
 ## 5. Verificación post-despliegue (checklist)
 
 - [ ] `https://api.tudominio.com/api/health` → `{"ok":true}`.
@@ -62,7 +83,9 @@ Crea 11 categorías, 22 productos con IVA 19%, stock inicial, sucursal, bodega, 
 - [ ] Crea un usuario CAJERO de prueba y confirma que NO ve Reportes/Configuración (RBAC).
 - [ ] Registra una venta de prueba, una devolución parcial y ciérrala; revisa cuadre de caja en 0.
 - [ ] Sube la foto de un producto y confirma que carga (volumen `pos_uploads`).
-- [ ] Revisa `/api/docs` (Swagger) solo para administración; no lo publiques en el menú.
+- [ ] Exporta la plantilla, edita `cantidadContada`, vuelve a importarla y verifica saldo y kardex.
+- [ ] Si configuraste OpenCode, ejecuta un análisis y confirma que la respuesta solo da sugerencias.
+- [ ] Swagger queda apagado por defecto en producción; si necesitas `/api/docs`, activa `ENABLE_SWAGGER=true` solo mientras lo usas.
 - [ ] Confirma backup diario de `pos-db` y descarga una copia inicial.
 
 ## 6. Operación diaria

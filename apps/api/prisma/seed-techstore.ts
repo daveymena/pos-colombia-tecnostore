@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { PrismaClient, UserRole } from '@prisma/client';
-import * as bcrypt from 'bcrypt';
+import * as bcrypt from 'bcryptjs';
 
 // Seed de PRODUCCIÓN para tienda de tecnología.
 // Uso: ADMIN_EMAIL=admin@tutienda.com ADMIN_PASSWORD='ClaveSegura123!' npm run db:seed:techstore -w apps/api

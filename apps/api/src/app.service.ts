@@ -5,7 +5,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { Prisma, PaymentMethod, UserRole } from '@prisma/client';
 import { PrismaService } from './prisma.service';
-import * as bcrypt from 'bcrypt';
+import * as bcrypt from 'bcryptjs';
 
 const money = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 const num = (n: any, label: string, min = 0) => {
@@ -220,8 +220,16 @@ export class AppService {
   }
 
   async listInventory(companyId: string, query: any = {}) {
-    const where: any = { product: { companyId, active: true } }; if (query.warehouseId) where.warehouseId = query.warehouseId;
-    return this.prisma.inventoryBalance.findMany({ where, include: { product: true, warehouse: { include: { branch: true } } }, orderBy: { product: { name: 'asc' } }, take: 2000 });
+    const [products, warehouses, balances] = await Promise.all([
+      this.prisma.product.findMany({ where: { companyId, active: true, kind: 'STOCK' }, orderBy: { name: 'asc' }, take: 2000 }),
+      this.prisma.warehouse.findMany({ where: { branch: { companyId, active: true }, active: true, ...(query.warehouseId ? { id: query.warehouseId } : {}) }, include: { branch: true }, orderBy: { name: 'asc' } }),
+      this.prisma.inventoryBalance.findMany({ where: { product: { companyId, active: true, kind: 'STOCK' }, ...(query.warehouseId ? { warehouseId: query.warehouseId } : {}) } }),
+    ]);
+    const byKey = new Map(balances.map((balance) => [`${balance.productId}:${balance.warehouseId}`, balance]));
+    return products.flatMap((product) => warehouses.map((warehouse) => {
+      const balance = byKey.get(`${product.id}:${warehouse.id}`);
+      return { id: balance?.id || `zero:${product.id}:${warehouse.id}`, productId: product.id, warehouseId: warehouse.id, quantity: balance?.quantity || 0, updatedAt: balance?.updatedAt || null, product, warehouse };
+    }));
   }
   async stockMovements(companyId: string, query: any = {}) {
     const where: any = { product: { companyId } }; if (query.productId) where.productId = query.productId; if (query.warehouseId) where.warehouseId = query.warehouseId;

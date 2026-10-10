@@ -23,6 +23,10 @@ services:
       JWT_SECRET: ${JWT_SECRET:?Define JWT_SECRET de al menos 32 caracteres}
       UPLOADS_DIR: /app/uploads
       CORS_ORIGIN: ${CORS_ORIGIN:?Define CORS_ORIGIN con el dominio del frontend}
+      OPENCODE_API_URL: ${OPENCODE_API_URL:-https://opencode.ai/zen/v1}
+      OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}
+      OPENCODE_MODEL: ${OPENCODE_MODEL:-deepseek-v4-flash-free}
+      ENABLE_SWAGGER: ${ENABLE_SWAGGER:-false}
       PORT: 3000
       NODE_ENV: production
     volumes: ["pos_uploads:/app/uploads"]

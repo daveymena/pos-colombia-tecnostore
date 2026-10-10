@@ -8,6 +8,8 @@ import { extname, join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { AppService } from './app.service';
 import { PrismaService } from './prisma.service';
+import { InventoryFilesService } from './inventory-files.service';
+import { OpenCodeInventoryService } from './opencode-inventory.service';
 
 export const uploadDir =
   process.env.UPLOADS_DIR ||
@@ -27,7 +29,13 @@ function imageFilter(req: any, file: any, cb: any) {
 @ApiTags('POS Colombia')
 @Controller()
 export class AppController {
-  constructor(private readonly service: AppService, private readonly jwt: JwtService, private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly service: AppService,
+    private readonly jwt: JwtService,
+    private readonly prisma: PrismaService,
+    private readonly inventoryFiles: InventoryFilesService,
+    private readonly inventoryAi: OpenCodeInventoryService,
+  ) {}
 
   private async context(auth?: string) {
     if (!auth?.startsWith('Bearer ')) throw new UnauthorizedException('Se requiere token Bearer');
@@ -40,7 +48,10 @@ export class AppController {
   }
   private roles(ctx: any, allowed: string[]) { if (!allowed.includes(ctx.role)) throw new ForbiddenException('No tienes permiso para esta operación'); }
 
-  @Get('health') health() { return { ok: true, service: 'pos-api', timestamp: new Date().toISOString() }; }
+  @Get('health') async health() {
+    await this.prisma.$queryRaw`SELECT 1`;
+    return { ok: true, service: 'pos-api', timestamp: new Date().toISOString() };
+  }
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('auth/login') login(@Body() body: { email: string; password: string }) { return this.service.login(body.email, body.password); }
   @ApiBearerAuth() @Get('auth/me') async me(@Headers('authorization') auth: string) { const c = await this.context(auth); return this.service.me(c.sub); }
@@ -95,6 +106,32 @@ export class AppController {
   @ApiBearerAuth() @Get('inventory') async inventory(@Headers('authorization') auth: string, @Query() query: any) { const c = await this.context(auth); return this.service.listInventory(c.companyId, query); }
   @ApiBearerAuth() @Get('inventory/movements') async stockMovements(@Headers('authorization') auth: string, @Query() query: any) { const c = await this.context(auth); return this.service.stockMovements(c.companyId, query); }
   @ApiBearerAuth() @Post('inventory/adjustments') async adjustStock(@Headers('authorization') auth: string, @Body() body: any) { const c = await this.context(auth); this.roles(c, ['ADMIN','MANAGER','INVENTORY']); return this.service.adjustStock(c.companyId, c.sub, body); }
+  @ApiBearerAuth() @Get('inventory/export') async exportInventory(@Headers('authorization') auth: string, @Query('format') format = 'xlsx', @Res() res: any) {
+    const c = await this.context(auth); this.roles(c, ['ADMIN', 'MANAGER', 'INVENTORY', 'ACCOUNTANT']);
+    const result = await this.inventoryFiles.exportInventory(c.companyId, String(format).toLowerCase());
+    res.set({ 'Content-Type': result.contentType, 'Content-Disposition': `attachment; filename="inventario-conteo.${result.extension}"`, 'Cache-Control': 'no-store' });
+    res.send(result.buffer);
+  }
+  @ApiBearerAuth() @Post('inventory/import/preview') @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }))
+  async previewInventoryImport(@Headers('authorization') auth: string, @UploadedFile() file: any) {
+    const c = await this.context(auth); this.roles(c, ['ADMIN', 'MANAGER', 'INVENTORY']);
+    if (!file) throw new BadRequestException('Adjunta un archivo Excel, Word, CSV, TXT o JSON.');
+    const ext = String(file.originalname || '').toLowerCase().split('.').pop() || '';
+    if (!['xlsx', 'docx', 'csv', 'txt', 'tsv', 'json'].includes(ext)) throw new BadRequestException('Formato no admitido. Usa .xlsx, .docx, .csv, .txt, .tsv o .json.');
+    return this.inventoryFiles.previewImport(c.companyId, file.buffer, file.originalname);
+  }
+  @ApiBearerAuth() @Post('inventory/import/apply') async applyInventoryImport(@Headers('authorization') auth: string, @Body() body: any) {
+    const c = await this.context(auth); this.roles(c, ['ADMIN', 'MANAGER', 'INVENTORY']);
+    return this.inventoryFiles.applyImport(c.companyId, c.sub, body);
+  }
+  @ApiBearerAuth() @Get('inventory/ai/status') async inventoryAiStatus(@Headers('authorization') auth: string) {
+    const c = await this.context(auth); this.roles(c, ['ADMIN', 'MANAGER', 'INVENTORY', 'ACCOUNTANT']);
+    return this.inventoryAi.status();
+  }
+  @ApiBearerAuth() @Post('inventory/ai/insights') async inventoryAiInsights(@Headers('authorization') auth: string) {
+    const c = await this.context(auth); this.roles(c, ['ADMIN', 'MANAGER', 'INVENTORY', 'ACCOUNTANT']);
+    return this.inventoryAi.inventoryInsights(c.companyId);
+  }
 
   @ApiBearerAuth() @Get('sales') async sales(@Headers('authorization') auth: string, @Query() query: any) { const c = await this.context(auth); return this.service.listSales(c.companyId, query); }
   @ApiBearerAuth() @Post('sales') async createSale(@Headers('authorization') auth: string, @Body() body: any) { const c = await this.context(auth); return this.service.createSale(c.companyId, c.sub, body); }
