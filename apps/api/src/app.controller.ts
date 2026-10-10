@@ -9,7 +9,9 @@ import { existsSync, mkdirSync } from 'fs';
 import { AppService } from './app.service';
 import { PrismaService } from './prisma.service';
 
-export const uploadDir = process.env.UPLOADS_DIR || join(process.cwd(), 'apps', 'api', 'uploads');
+export const uploadDir =
+  process.env.UPLOADS_DIR ||
+  (process.cwd().endsWith(join('apps', 'api')) ? join(process.cwd(), 'uploads') : join(process.cwd(), 'apps', 'api', 'uploads'));
 if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true });
 
 const imageStorage = diskStorage({

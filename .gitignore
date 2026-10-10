@@ -1,6 +1,7 @@
 node_modules
 dist
 .env
+*.log
 apps/api/dist
 apps/web/dist
 apps/api/uploads

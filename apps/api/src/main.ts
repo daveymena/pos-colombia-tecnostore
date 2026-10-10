@@ -12,7 +12,9 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
-  const uploads = process.env.UPLOADS_DIR || join(process.cwd(), 'apps', 'api', 'uploads');
+  const uploads =
+    process.env.UPLOADS_DIR ||
+    (process.cwd().endsWith(join('apps', 'api')) ? join(process.cwd(), 'uploads') : join(process.cwd(), 'apps', 'api', 'uploads'));
   if (!existsSync(uploads)) mkdirSync(uploads, { recursive: true });
   app.useStaticAssets(uploads, { prefix: '/uploads/' });
   app.setGlobalPrefix('api');
