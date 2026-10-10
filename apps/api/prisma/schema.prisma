@@ -1,0 +1,579 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  CASHIER
+  INVENTORY
+  ACCOUNTANT
+}
+
+enum ProductKind {
+  STOCK
+  SERVICE
+}
+
+enum SaleStatus {
+  COMPLETED
+  PARTIALLY_RETURNED
+  VOIDED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  TRANSFER
+  QR
+  CREDIT
+  OTHER
+}
+
+enum CashSessionStatus {
+  OPEN
+  CLOSED
+}
+
+enum StockMovementType {
+  OPENING
+  PURCHASE
+  SALE
+  RETURN
+  ADJUSTMENT
+  TRANSFER_IN
+  TRANSFER_OUT
+  SUPPLIER_RETURN
+}
+
+enum PurchaseStatus {
+  DRAFT
+  ORDERED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+enum ReturnStatus {
+  COMPLETED
+  CANCELLED
+}
+
+model Company {
+  id          String      @id @default(uuid())
+  name        String
+  taxId       String?
+  email       String?
+  phone       String?
+  address     String?
+  logoUrl     String?
+  currency    String      @default("COP")
+  timezone    String      @default("America/Bogota")
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  branches    Branch[]
+  users       User[]
+  products    Product[]
+  customers   Customer[]
+  suppliers   Supplier[]
+  sales       Sale[]
+  purchases   Purchase[]
+  supplierReturns SupplierReturn[]
+  expenses    Expense[]
+  categories  Category[]
+  auditLogs   AuditLog[]
+  sequences   DocumentSequence[]
+  notifications Notification[]
+  electronicInvoices ElectronicInvoice[]
+}
+
+model Branch {
+  id        String      @id @default(uuid())
+  companyId String
+  name      String
+  code      String?
+  address   String?
+  phone     String?
+  active    Boolean     @default(true)
+  createdAt DateTime    @default(now())
+  company   Company     @relation(fields: [companyId], references: [id])
+  warehouses Warehouse[]
+  registers Register[]
+  sequences DocumentSequence[]
+  sales     Sale[]
+  @@unique([companyId, name])
+  @@index([companyId, active])
+}
+
+model User {
+  id           String      @id @default(uuid())
+  companyId    String
+  name         String
+  email        String      @unique
+  passwordHash String
+  role         UserRole    @default(CASHIER)
+  active       Boolean     @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  company      Company     @relation(fields: [companyId], references: [id])
+  sales        Sale[]
+  cashSessions CashSession[]
+  auditLogs    AuditLog[]
+  expenses     Expense[]
+  stockMoves   StockMovement[]
+}
+
+model Category {
+  id        String    @id @default(uuid())
+  companyId String
+  name      String
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  company   Company   @relation(fields: [companyId], references: [id])
+  products  Product[]
+  @@unique([companyId, name])
+}
+
+model Product {
+  id            String       @id @default(uuid())
+  companyId     String
+  categoryId    String?
+  name          String
+  sku           String
+  barcode       String?
+  description   String?
+  brand         String?
+  imageUrl      String?
+  unit           String      @default("unidad")
+  kind          ProductKind  @default(STOCK)
+  cost          Decimal      @default(0) @db.Decimal(14, 2)
+  price         Decimal      @db.Decimal(14, 2)
+  promoPrice    Decimal?     @db.Decimal(14, 2)
+  taxRate       Decimal      @default(0) @db.Decimal(5, 2)
+  stockMin      Decimal      @default(0) @db.Decimal(14, 3)
+  active        Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  company       Company      @relation(fields: [companyId], references: [id])
+  category      Category?    @relation(fields: [categoryId], references: [id])
+  balances      InventoryBalance[]
+  stockMoves    StockMovement[]
+  saleItems     SaleItem[]
+  purchaseItems PurchaseItem[]
+  returnItems   SaleReturnItem[]
+  supplierReturnItems SupplierReturnItem[]
+  stockTransferItems StockTransferItem[]
+  @@unique([companyId, sku])
+  @@index([companyId, name])
+  @@index([companyId, barcode])
+  @@index([companyId, active])
+}
+
+model Warehouse {
+  id        String            @id @default(uuid())
+  branchId  String
+  name      String
+  active    Boolean           @default(true)
+  branch    Branch            @relation(fields: [branchId], references: [id])
+  balances  InventoryBalance[]
+  movements StockMovement[]
+  purchases Purchase[]
+  outgoingTransfers StockTransfer[] @relation("TransferFrom")
+  incomingTransfers StockTransfer[] @relation("TransferTo")
+  @@unique([branchId, name])
+}
+
+model InventoryBalance {
+  id          String    @id @default(uuid())
+  productId   String
+  warehouseId String
+  quantity    Decimal   @default(0) @db.Decimal(14, 3)
+  updatedAt   DateTime  @updatedAt
+  product     Product   @relation(fields: [productId], references: [id])
+  warehouse   Warehouse @relation(fields: [warehouseId], references: [id])
+  @@unique([productId, warehouseId])
+  @@index([warehouseId, quantity])
+}
+
+model StockMovement {
+  id          String            @id @default(uuid())
+  productId   String
+  warehouseId String
+  userId      String?
+  type        StockMovementType
+  quantity    Decimal           @db.Decimal(14, 3)
+  unitCost    Decimal           @default(0) @db.Decimal(14, 2)
+  reference   String?
+  note        String?
+  createdAt   DateTime          @default(now())
+  product     Product           @relation(fields: [productId], references: [id])
+  warehouse   Warehouse         @relation(fields: [warehouseId], references: [id])
+  user        User?             @relation(fields: [userId], references: [id])
+  @@index([productId, createdAt])
+  @@index([warehouseId, createdAt])
+}
+
+model Customer {
+  id        String   @id @default(uuid())
+  companyId String
+  name      String
+  document  String?
+  phone     String?
+  email     String?
+  address   String?
+  notes     String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  company   Company  @relation(fields: [companyId], references: [id])
+  sales     Sale[]
+  @@index([companyId, name])
+  @@index([companyId, document])
+}
+
+model Supplier {
+  id        String     @id @default(uuid())
+  companyId String
+  name      String
+  taxId     String?
+  phone     String?
+  email     String?
+  address   String?
+  active    Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  company   Company    @relation(fields: [companyId], references: [id])
+  purchases Purchase[]
+  returns   SupplierReturn[]
+  @@index([companyId, name])
+}
+
+model Register {
+  id       String        @id @default(uuid())
+  branchId String
+  name     String
+  active   Boolean       @default(true)
+  branch   Branch        @relation(fields: [branchId], references: [id])
+  sessions CashSession[]
+  @@unique([branchId, name])
+}
+
+model CashSession {
+  id          String            @id @default(uuid())
+  registerId  String
+  userId      String
+  openingCash Decimal           @db.Decimal(14, 2)
+  closingCash Decimal?          @db.Decimal(14, 2)
+  expectedCash Decimal?         @db.Decimal(14, 2)
+  difference  Decimal?          @db.Decimal(14, 2)
+  status      CashSessionStatus @default(OPEN)
+  openedAt    DateTime          @default(now())
+  closedAt    DateTime?
+  notes       String?
+  register    Register          @relation(fields: [registerId], references: [id])
+  user        User              @relation(fields: [userId], references: [id])
+  movements   CashMovement[]
+  sales       Sale[]
+  @@index([registerId, status])
+  @@index([userId, openedAt])
+}
+
+model CashMovement {
+  id          String      @id @default(uuid())
+  sessionId   String
+  type        String
+  amount      Decimal     @db.Decimal(14, 2)
+  description String
+  reference   String?
+  createdAt   DateTime    @default(now())
+  session     CashSession @relation(fields: [sessionId], references: [id])
+  @@index([sessionId, createdAt])
+}
+
+model Sale {
+  id          String       @id @default(uuid())
+  companyId   String
+  branchId    String
+  userId      String
+  customerId  String?
+  sessionId   String?
+  number      Int
+  status      SaleStatus   @default(COMPLETED)
+  subtotal    Decimal      @db.Decimal(14, 2)
+  discount    Decimal      @default(0) @db.Decimal(14, 2)
+  tax         Decimal      @default(0) @db.Decimal(14, 2)
+  total       Decimal      @db.Decimal(14, 2)
+  notes       String?
+  createdAt   DateTime     @default(now())
+  company     Company      @relation(fields: [companyId], references: [id])
+  branch      Branch       @relation(fields: [branchId], references: [id])
+  user        User         @relation(fields: [userId], references: [id])
+  customer    Customer?    @relation(fields: [customerId], references: [id])
+  session     CashSession? @relation(fields: [sessionId], references: [id])
+  items       SaleItem[]
+  payments    Payment[]
+  returns     SaleReturn[]
+  receivable  AccountReceivable?
+  electronicInvoices ElectronicInvoice[]
+  @@unique([companyId, branchId, number])
+  @@index([companyId, createdAt])
+  @@index([branchId, createdAt])
+}
+
+model SaleItem {
+  id          String         @id @default(uuid())
+  saleId      String
+  productId   String
+  description String
+  sku         String
+  quantity    Decimal        @db.Decimal(14, 3)
+  unitPrice   Decimal        @db.Decimal(14, 2)
+  unitCost    Decimal        @db.Decimal(14, 2)
+  taxRate     Decimal        @db.Decimal(5, 2)
+  lineTotal   Decimal        @db.Decimal(14, 2)
+  returnedQty Decimal        @default(0) @db.Decimal(14, 3)
+  sale        Sale           @relation(fields: [saleId], references: [id])
+  product     Product        @relation(fields: [productId], references: [id])
+  returnItems SaleReturnItem[]
+  @@index([saleId])
+}
+
+model Payment {
+  id        String        @id @default(uuid())
+  saleId    String
+  method    PaymentMethod
+  amount    Decimal       @db.Decimal(14, 2)
+  reference String?
+  createdAt DateTime      @default(now())
+  sale      Sale          @relation(fields: [saleId], references: [id])
+  @@index([saleId, method])
+}
+
+model SaleReturn {
+  id          String       @id @default(uuid())
+  saleId      String
+  number      String
+  status      ReturnStatus @default(COMPLETED)
+  total       Decimal      @db.Decimal(14, 2)
+  refundMethod PaymentMethod
+  restock     Boolean      @default(true)
+  reason      String?
+  createdAt   DateTime     @default(now())
+  sale        Sale         @relation(fields: [saleId], references: [id])
+  items       SaleReturnItem[]
+  @@unique([saleId, number])
+}
+
+model SaleReturnItem {
+  id          String   @id @default(uuid())
+  returnId    String
+  saleItemId  String
+  productId   String
+  quantity    Decimal  @db.Decimal(14, 3)
+  amount      Decimal  @db.Decimal(14, 2)
+  return      SaleReturn @relation(fields: [returnId], references: [id])
+  saleItem    SaleItem @relation(fields: [saleItemId], references: [id])
+  product     Product  @relation(fields: [productId], references: [id])
+}
+
+model Purchase {
+  id          String         @id @default(uuid())
+  companyId   String
+  supplierId  String
+  number      String
+  warehouseId String?
+  status      PurchaseStatus @default(DRAFT)
+  subtotal    Decimal        @db.Decimal(14, 2)
+  tax         Decimal        @default(0) @db.Decimal(14, 2)
+  total       Decimal        @db.Decimal(14, 2)
+  createdAt   DateTime       @default(now())
+  receivedAt  DateTime?
+  company     Company        @relation(fields: [companyId], references: [id])
+  supplier    Supplier       @relation(fields: [supplierId], references: [id])
+  warehouse   Warehouse?     @relation(fields: [warehouseId], references: [id])
+  items       PurchaseItem[]
+  accountPayable AccountPayable?
+  @@unique([companyId, number])
+  @@index([companyId, createdAt])
+}
+
+model PurchaseItem {
+  id               String   @id @default(uuid())
+  purchaseId       String
+  productId        String
+  quantity         Decimal  @db.Decimal(14, 3)
+  receivedQuantity Decimal  @default(0) @db.Decimal(14, 3)
+  unitCost         Decimal  @db.Decimal(14, 2)
+  lineTotal        Decimal  @db.Decimal(14, 2)
+  purchase         Purchase @relation(fields: [purchaseId], references: [id])
+  product          Product  @relation(fields: [productId], references: [id])
+}
+
+
+model SupplierReturn {
+  id          String   @id @default(uuid())
+  companyId   String
+  supplierId  String
+  warehouseId String
+  number      String
+  total       Decimal  @db.Decimal(14, 2)
+  reason      String?
+  status      String   @default("COMPLETED")
+  createdAt   DateTime @default(now())
+  company     Company  @relation(fields: [companyId], references: [id])
+  supplier    Supplier @relation(fields: [supplierId], references: [id])
+  items       SupplierReturnItem[]
+  @@unique([companyId, number])
+  @@index([companyId, createdAt])
+}
+
+model SupplierReturnItem {
+  id        String         @id @default(uuid())
+  returnId  String
+  productId String
+  quantity  Decimal        @db.Decimal(14, 3)
+  unitCost  Decimal        @db.Decimal(14, 2)
+  lineTotal Decimal        @db.Decimal(14, 2)
+  return    SupplierReturn @relation(fields: [returnId], references: [id])
+  product   Product        @relation(fields: [productId], references: [id])
+}
+
+model AccountPayable {
+  id         String          @id @default(uuid())
+  purchaseId String          @unique
+  amount     Decimal         @db.Decimal(14, 2)
+  paidAmount Decimal         @default(0) @db.Decimal(14, 2)
+  dueDate    DateTime?
+  status     String          @default("OPEN")
+  createdAt  DateTime        @default(now())
+  purchase   Purchase        @relation(fields: [purchaseId], references: [id])
+  payments   PayablePayment[]
+}
+
+model PayablePayment {
+  id          String         @id @default(uuid())
+  payableId   String
+  amount      Decimal        @db.Decimal(14, 2)
+  method      PaymentMethod
+  reference   String?
+  createdAt   DateTime       @default(now())
+  payable     AccountPayable @relation(fields: [payableId], references: [id])
+}
+
+model Expense {
+  id            String   @id @default(uuid())
+  companyId     String
+  userId        String
+  category      String
+  description   String
+  amount        Decimal  @db.Decimal(14, 2)
+  paymentMethod String
+  sessionId     String?
+  createdAt     DateTime @default(now())
+  company       Company  @relation(fields: [companyId], references: [id])
+  user          User     @relation(fields: [userId], references: [id])
+  @@index([companyId, createdAt])
+}
+
+model AccountReceivable {
+  id          String   @id @default(uuid())
+  saleId      String   @unique
+  amount      Decimal  @db.Decimal(14, 2)
+  paidAmount  Decimal  @default(0) @db.Decimal(14, 2)
+  dueDate     DateTime?
+  status      String   @default("OPEN")
+  createdAt   DateTime @default(now())
+  sale        Sale     @relation(fields: [saleId], references: [id])
+  payments    ReceivablePayment[]
+}
+
+model ReceivablePayment {
+  id           String           @id @default(uuid())
+  receivableId String
+  amount       Decimal          @db.Decimal(14, 2)
+  method       PaymentMethod
+  reference    String?
+  createdAt    DateTime         @default(now())
+  receivable   AccountReceivable @relation(fields: [receivableId], references: [id])
+}
+
+model StockTransfer {
+  id            String   @id @default(uuid())
+  fromWarehouseId String
+  toWarehouseId String
+  status        String   @default("DRAFT")
+  notes         String?
+  createdAt     DateTime @default(now())
+  fromWarehouse Warehouse @relation("TransferFrom", fields: [fromWarehouseId], references: [id])
+  toWarehouse Warehouse @relation("TransferTo", fields: [toWarehouseId], references: [id])
+  items         StockTransferItem[]
+}
+
+model StockTransferItem {
+  id         String        @id @default(uuid())
+  transferId String
+  productId  String
+  quantity   Decimal       @db.Decimal(14, 3)
+  transfer   StockTransfer @relation(fields: [transferId], references: [id])
+  product    Product       @relation(fields: [productId], references: [id])
+}
+
+model DocumentSequence {
+  id        String   @id @default(uuid())
+  companyId String
+  branchId  String
+  type      String
+  current   Int      @default(0)
+  company   Company  @relation(fields: [companyId], references: [id])
+  branch    Branch   @relation(fields: [branchId], references: [id])
+  @@unique([companyId, branchId, type])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  companyId String
+  userId    String?
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+  company   Company  @relation(fields: [companyId], references: [id])
+  user      User?    @relation(fields: [userId], references: [id])
+  @@index([companyId, createdAt])
+}
+
+model ElectronicInvoice {
+  id              String   @id @default(uuid())
+  companyId       String
+  saleId          String
+  provider        String?
+  status          String   @default("NOT_CONFIGURED")
+  externalId      String?
+  cufe            String?
+  responseMessage String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  company         Company  @relation(fields: [companyId], references: [id])
+  sale            Sale     @relation(fields: [saleId], references: [id])
+  @@index([companyId, createdAt])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  companyId String
+  type      String
+  title     String
+  message   String
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+  company   Company  @relation(fields: [companyId], references: [id])
+  @@index([companyId, readAt])
+}

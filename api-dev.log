@@ -1,0 +1,26 @@
+
+> pos-api@1.0.0 dev
+> nest start --watch
+
+[2J[3J[H[[90m9:37:49 p. m.[0m] Starting compilation in watch mode...
+
+[[90m9:37:53 p. m.[0m] Found 0 errors. Watching for file changes.
+
+C:\Users\ADMIN\Downloads\pos_colombia\apps\api\src\app.module.ts:10
+  throw new Error('JWT_SECRET debe configurarse con al menos 32 caracteres. Copia .env.example a .env y define un secreto seguro.');
+  ^
+
+
+Error: JWT_SECRET debe configurarse con al menos 32 caracteres. Copia .env.example a .env y define un secreto seguro.
+    at Object.<anonymous> (C:\Users\ADMIN\Downloads\pos_colombia\apps\api\src\app.module.ts:10:9)
+    at Module._compile (node:internal/modules/cjs/loader:1706:14)
+    at Object..js (node:internal/modules/cjs/loader:1839:10)
+    at Module.load (node:internal/modules/cjs/loader:1441:32)
+    at Function._load (node:internal/modules/cjs/loader:1263:12)
+    at TracingChannel.traceSync (node:diagnostics_channel:322:14)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:237:24)
+    at Module.require (node:internal/modules/cjs/loader:1463:12)
+    at require (node:internal/modules/helpers:147:16)
+    at Object.<anonymous> (C:\Users\ADMIN\Downloads\pos_colombia\apps\api\src\main.ts:6:1)
+
+Node.js v22.20.0

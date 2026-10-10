@@ -1,0 +1,45 @@
+# Compose de PRODUCCIÓN (VPS o EasyPanel con soporte Compose).
+# En EasyPanel se recomienda usar sus servicios gestionados (ver docs/DESPLIEGUE_EASYPANEL.md).
+# Variables obligatorias: POSTGRES_PASSWORD, JWT_SECRET (32+ caracteres), API_PUBLIC_URL, CORS_ORIGIN.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-posdb}
+    volumes: ["pos_pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pos} -d ${POSTGRES_DB:-posdb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build: ./apps/api
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-pos}:${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-posdb}?schema=public
+      JWT_SECRET: ${JWT_SECRET:?Define JWT_SECRET de al menos 32 caracteres}
+      UPLOADS_DIR: /app/uploads
+      CORS_ORIGIN: ${CORS_ORIGIN:?Define CORS_ORIGIN con el dominio del frontend}
+      PORT: 3000
+      NODE_ENV: production
+    volumes: ["pos_uploads:/app/uploads"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    # Sin puertos publicados: se expone vía proxy inverso (Traefik en EasyPanel).
+    # Para VPS simple, añade: ports: ["127.0.0.1:3000:3000"]
+
+  web:
+    build:
+      context: ./apps/web
+      args:
+        VITE_API_URL: ${API_PUBLIC_URL:?Define API_PUBLIC_URL (https://api.tudominio.com/api)}
+    restart: unless-stopped
+
+volumes:
+  pos_pgdata:
+  pos_uploads:
