@@ -21,4 +21,4 @@ VOLUME /app/uploads
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=8s --start-period=30s --retries=3 \
   CMD node -e "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/main"]
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/main.js"]

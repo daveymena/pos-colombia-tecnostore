@@ -7,6 +7,7 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { join } from 'path';
 import { existsSync, mkdirSync } from 'fs';
+import { NextFunction, Request, Response } from 'express';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -17,6 +18,15 @@ async function bootstrap() {
     (process.cwd().endsWith(join('apps', 'api')) ? join(process.cwd(), 'uploads') : join(process.cwd(), 'apps', 'api', 'uploads'));
   if (!existsSync(uploads)) mkdirSync(uploads, { recursive: true });
   app.useStaticAssets(uploads, { prefix: '/uploads/' });
+  const webDist = process.env.WEB_DIST_DIR || join(process.cwd(), 'apps', 'web', 'dist');
+  if (existsSync(webDist)) {
+    app.useStaticAssets(webDist, { index: false });
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      if (req.method !== 'GET' || req.path === '/api' || req.path.startsWith('/api/') || req.path.startsWith('/uploads/')) return next();
+      if (!String(req.headers.accept || '').includes('text/html')) return next();
+      res.sendFile(join(webDist, 'index.html'));
+    });
+  }
   app.setGlobalPrefix('api');
   const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173').split(',').map(v => v.trim()).filter(Boolean);
   app.enableCors({ origin: allowedOrigins, credentials: true });
