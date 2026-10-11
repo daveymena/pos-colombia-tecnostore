@@ -97,7 +97,7 @@ export class OpenCodeInventoryService {
         continue;
       }
       if (response.status === 401) throw new ServiceUnavailableException('La clave de OpenCode fue rechazada (HTTP 401). Revisa OPENCODE_API_KEY.');
-      if (response.status === 404 || response.status === 400 || response.status === 403 || response.status === 429) {
+      if ([400, 403, 404, 409, 410, 422, 429].includes(response.status)) {
         errors.push(`${model}: no disponible (${response.status})`);
         continue;
       }
