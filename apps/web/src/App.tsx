@@ -464,7 +464,7 @@ function ModuleView({page,data,rows,search,setSearch,openCreate,openAction,colum
     {localMessage&&<div className="success-banner"><CheckCircle2 size={16}/>{localMessage}<button onClick={()=>setLocalMessage('')}>Cerrar</button></div>}
     {page==='Inventario'&&<>
       <section className="panel inventory-tools">
-        <div className="inventory-tools-copy"><div className="inventory-tools-icon"><Boxes size={20}/></div><div><h3>Conteo físico y archivos</h3><p className="muted small">Importa Excel, Word o texto. Revisas las diferencias antes de tocar existencias.</p></div></div>
+        <div className="inventory-tools-copy"><div className="inventory-tools-icon"><Boxes size={20}/></div><div><h3>Conteo físico y archivos</h3><p className="muted small">Importa Excel, Word o texto. Revisas las diferencias antes de tocar existencias.</p>{(dataAll?.products||[]).length===0&&<p className="field-help">Aún no hay productos: primero créalos en Productos (Nuevo registro o Importar CSV) y luego exporta la plantilla de conteo.</p>}</div></div>
         <div className="inventory-tool-actions">
           <input ref={inventoryImportRef} type="file" accept=".xlsx,.docx,.csv,.txt,.tsv,.json" hidden onChange={e=>{const f=e.target.files?.[0];if(f)previewInventoryFile(f);}}/>
           <button className="primary" disabled={localBusy} onClick={()=>inventoryImportRef.current?.click()}><Upload size={16}/>{localBusy?'Leyendo…':'Importar conteo'}</button>
