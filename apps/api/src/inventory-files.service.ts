@@ -397,7 +397,7 @@ export class InventoryFilesService {
       }
       await tx.auditLog.create({ data: { companyId, userId, action: 'INVENTORY_COUNT_IMPORT', entity: 'Inventory', entityId: importId, metadata: { rows: applied.length, changed: applied.filter((row) => row.delta !== 0).length, created: applied.filter((row) => row.created).length, note: input.note || null } } });
       return { importId, rows: applied.length, changed: applied.filter((row) => row.delta !== 0).length, unchanged: applied.filter((row) => row.delta === 0 && !row.created).length, created: applied.filter((row) => row.created).length, applied };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 30000, timeout: 120000 });
   }
 
   async exportInventory(companyId: string, format: string) {
