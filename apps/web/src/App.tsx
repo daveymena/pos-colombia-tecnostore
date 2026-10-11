@@ -377,6 +377,7 @@ function ModuleView({page,data,rows,search,setSearch,openCreate,openAction,colum
   const [inventoryPreview,setInventoryPreview]=useState<any>(null);
   const [inventoryFile,setInventoryFile]=useState<File|null>(null);
   const [inventoryMapping,setInventoryMapping]=useState<any>(null);
+  const [inventoryCreateMissing,setInventoryCreateMissing]=useState(true);
   const [inventoryAiStatus,setInventoryAiStatus]=useState<any>(null);
   const [inventoryAiResult,setInventoryAiResult]=useState<any>(null);
   const [inventoryAiError,setInventoryAiError]=useState('');
@@ -409,11 +410,12 @@ function ModuleView({page,data,rows,search,setSearch,openCreate,openAction,colum
     } catch(e:any) { setLocalMessage(e.message||'No se pudo subir la imagen.'); }
     finally { setLocalBusy(false); setUploadRow(null); if(uploadRef.current) uploadRef.current.value=''; }
   }
-  async function previewInventoryFile(file:File, mapping?:any) {
+  async function previewInventoryFile(file:File, mapping?:any, createMissing?:boolean) {
     setLocalBusy(true);setLocalMessage('');setInventoryPreview(null);
     try {
       const form = new FormData(); form.append('file',file);
       if(mapping) form.append('mapping',JSON.stringify(mapping));
+      form.append('createMissing',(createMissing??inventoryCreateMissing)?'true':'false');
       const result = await uploadFile('/inventory/import/preview',form);
       setInventoryPreview(result); setInventoryFile(file);
       if(mapping) setInventoryMapping(mapping);
@@ -439,7 +441,7 @@ function ModuleView({page,data,rows,search,setSearch,openCreate,openAction,colum
     setLocalBusy(true);setLocalMessage('');
     try {
       const result = await request('/inventory/import/apply',{method:'POST',body:JSON.stringify({rows:validRows,note:`Conteo importado: ${inventoryPreview.filename}`})});
-      setLocalMessage(`Conteo aplicado: ${result.changed} saldo(s) ajustado(s), ${result.unchanged} sin cambio. Referencia ${result.importId}.`);
+      setLocalMessage(`Conteo aplicado: ${result.changed} saldo(s) ajustado(s), ${result.created||0} producto(s) creado(s), ${result.unchanged} sin cambio. Referencia ${result.importId}.`);
       setInventoryPreview(null); await loadPage(page); await loadPage('Dashboard');
     } catch(e:any) { setLocalMessage(e.message||'No se pudo aplicar el conteo.'); }
     finally { setLocalBusy(false); }
@@ -502,8 +504,8 @@ function ModuleView({page,data,rows,search,setSearch,openCreate,openAction,colum
       </section>
       {inventoryPreview&&<section className="panel inventory-preview">
         <div className="panel-head"><div><h3>Vista previa del conteo</h3><p className="muted small">{inventoryPreview.filename} · {inventoryPreview.valid} válidas · {inventoryPreview.invalid} con error. Nada se ha guardado todavía.</p></div><button className="text-btn" onClick={()=>setInventoryPreview(null)}>Descartar</button></div>
-        <div className="table-wrap"><table><thead><tr><th>Fila</th><th>SKU / producto</th><th>Sucursal / bodega</th><th>Actual</th><th>Contado</th><th>Diferencia</th><th>Revisión</th></tr></thead><tbody>{inventoryPreview.rows.map((row:any)=><tr key={`${row.line}-${row.sku}`}><td>{row.line}</td><td><b>{row.sku||'—'}</b><small className="preview-product-name">{row.productName||''}</small>{(row.guessed||[]).map((g:string)=><small key={g} className="preview-guess">{g}</small>)}</td><td>{row.branchName||'—'} / {row.warehouseName||'—'}{row.warehouseDefaulted&&<small className="preview-guess">bodega por defecto</small>}</td><td>{row.expectedQuantity??'—'}</td><td>{row.countedQuantity??'—'}</td><td>{row.delta===undefined?'—':Number(row.delta)>0?`+${row.delta}`:row.delta}</td><td>{row.valid?<span className="pill green">Lista</span>:<span className="pill danger-pill">{row.error}</span>}</td></tr>)}</tbody></table></div>
-        <div className="preview-footer"><p className="field-help">Se aplicarán solo filas válidas; las filas con error se omiten. Si un saldo cambia después de esta vista previa, se cancela toda la operación y deberás importar de nuevo.</p><div className="preview-actions">{inventoryAiStatus?.configured&&<button className="secondary" disabled={localBusy||!inventoryFile} onClick={mapInventoryWithAi}><Sparkles size={16}/>Mapear columnas con IA</button>}<button className="primary" disabled={localBusy||inventoryPreview.valid===0} onClick={applyInventoryFile}><CheckCircle2 size={16}/>{localBusy?'Aplicando…':`Aplicar ${inventoryPreview.valid} filas válidas`}</button></div></div>
+        <div className="table-wrap"><table><thead><tr><th>Fila</th><th>SKU / producto</th><th>Sucursal / bodega</th><th>Actual</th><th>Contado</th><th>Diferencia</th><th>Revisión</th></tr></thead><tbody>{inventoryPreview.rows.map((row:any)=><tr key={`${row.line}-${row.sku}`}><td>{row.line}</td><td><b>{row.sku||'—'}</b><small className="preview-product-name">{row.productName||''}</small>{(row.guessed||[]).map((g:string)=><small key={g} className="preview-guess">{g}</small>)}</td><td>{row.branchName||'—'} / {row.warehouseName||'—'}{row.warehouseDefaulted&&<small className="preview-guess">bodega por defecto</small>}</td><td>{row.expectedQuantity??'—'}</td><td>{row.countedQuantity??'—'}</td><td>{row.delta===undefined?'—':Number(row.delta)>0?`+${row.delta}`:row.delta}</td><td>{row.valid?(row.willCreate?<span className="pill warning">Nuevo</span>:<span className="pill green">Lista</span>):<span className="pill danger-pill">{row.error}</span>}</td></tr>)}</tbody></table></div>
+        <div className="preview-footer"><p className="field-help">Se aplicarán solo filas válidas; las filas con error se omiten. Si un saldo cambia después de esta vista previa, se cancela toda la operación y deberás importar de nuevo.</p><label className="check-label"><input type="checkbox" checked={inventoryCreateMissing} onChange={e=>{setInventoryCreateMissing(e.target.checked); if(inventoryFile) previewInventoryFile(inventoryFile, inventoryMapping, e.target.checked);}}/> Crear productos faltantes (precio y costo en 0, editables luego)</label><div className="preview-actions">{inventoryAiStatus?.configured&&<button className="secondary" disabled={localBusy||!inventoryFile} onClick={mapInventoryWithAi}><Sparkles size={16}/>Mapear columnas con IA</button>}<button className="primary" disabled={localBusy||inventoryPreview.valid===0} onClick={applyInventoryFile}><CheckCircle2 size={16}/>{localBusy?'Aplicando…':`Aplicar ${inventoryPreview.valid} filas válidas`}</button></div></div>
       </section>}
       {inventoryAiError&&<div className="error banner">{inventoryAiError}<button onClick={()=>setInventoryAiError('')}>Cerrar</button></div>}
       {inventoryAiResult&&<section className="panel inventory-ai-result"><div className="panel-head"><div><p className="eyebrow">ASISTENTE DE INVENTARIO · {inventoryAiResult.model||''}</p><h3>{inventoryAiResult.kind==='restock'?'Plan de reposición':inventoryAiResult.kind==='pricing'?'Precios y promociones':inventoryAiResult.kind==='copy'?'Descripción comercial':'Oportunidades y alertas'}</h3></div><button className="text-btn" onClick={()=>setInventoryAiResult(null)}>Cerrar</button></div>

@@ -133,7 +133,8 @@ export class AppController {
         }
       } catch { throw new BadRequestException('El mapeo de columnas no es un JSON válido.'); }
     }
-    return this.inventoryFiles.previewImport(c.companyId, file.buffer, file.originalname, mapping ? { mapping } : undefined);
+    const createMissing = String(body?.createMissing || '').toLowerCase() === 'true';
+    return this.inventoryFiles.previewImport(c.companyId, file.buffer, file.originalname, mapping || createMissing ? { mapping, createMissing } : undefined);
   }
   @ApiBearerAuth() @Post('inventory/import/apply') async applyInventoryImport(@Headers('authorization') auth: string, @Body() body: any) {
     const c = await this.context(auth); this.roles(c, ['ADMIN', 'MANAGER', 'INVENTORY']);

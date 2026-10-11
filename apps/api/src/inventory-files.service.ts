@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client';
 import * as ExcelJS from 'exceljs';
 import * as mammoth from 'mammoth';
 import * as cheerio from 'cheerio';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const JSZip = require('jszip');
 import { Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType } from 'docx';
 import { PrismaService } from './prisma.service';
 import { OpenCodeInventoryService } from './opencode-inventory.service';
@@ -23,6 +25,8 @@ export type InventoryImportRow = {
   error?: string;
   guessed?: string[];
   warehouseDefaulted?: boolean;
+  willCreate?: boolean;
+  newSku?: string;
 };
 
 const cleanHeader = (value: unknown) => String(value ?? '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '');
@@ -107,6 +111,37 @@ export class InventoryFilesService {
     return best;
   }
 
+  private async readXlsxLoose(buffer: Buffer): Promise<Matrix> {
+    // Respaldo para archivos que ExcelJS no puede abrir (dibujos/comentarios heredados):
+    // lee directamente sheet1.xml + cadenas compartidas del ZIP.
+    const zip = await JSZip.loadAsync(buffer);
+    const sheetEntry = Object.keys(zip.files).find((name) => /^xl\/worksheets\/sheet1\.xml$/i.test(name));
+    if (!sheetEntry) throw new BadRequestException('El Excel no trae una hoja legible.');
+    const stringsEntry = Object.keys(zip.files).find((name) => /^xl\/sharedStrings\.xml$/i.test(name));
+    let shared: string[] = [];
+    if (stringsEntry) {
+      const xml = await zip.files[stringsEntry].async('string');
+      const $ = cheerio.load(xml, { xmlMode: true });
+      shared = $('si').toArray().map((si) => $(si).find('t').toArray().map((t) => $(t).text()).join(''));
+    }
+    const sheetXml = await zip.files[sheetEntry].async('string');
+    const $ = cheerio.load(sheetXml, { xmlMode: true });
+    const rows: Matrix = [];
+    $('sheetData > row').each((_, row) => {
+      const values: string[] = [];
+      $(row).find('c').each((__, cell) => {
+        const type = $(cell).attr('t');
+        if (type === 'inlineStr') values.push($(cell).find('is t').toArray().map((t) => $(t).text()).join(''));
+        else if (type === 's') values.push(shared[Number($(cell).find('v').text())] ?? '');
+        else if (type === 'str' || type === undefined) values.push($(cell).find('v').text() || '');
+        else values.push($(cell).find('v').text() || '');
+      });
+      if (nonEmpty(values)) rows.push(values);
+    });
+    if (!rows.length) throw new BadRequestException('El Excel no tiene filas con datos.');
+    return rows;
+  }
+
   private async readMatrix(buffer: Buffer, filename: string): Promise<Matrix> {
     if (buffer.length > 12 * 1024 * 1024) throw new BadRequestException('El archivo supera el tamaño máximo permitido.');
     const magic = buffer.subarray(0, 4);
@@ -116,11 +151,22 @@ export class InventoryFilesService {
     }
     const looksZip = magic[0] === 0x50 && magic[1] === 0x4b;
     if (looksZip || ext === 'xlsx') {
-      try { return await this.readXlsx(buffer); }
-      catch (error: any) {
-        if (error instanceof BadRequestException) throw error;
-        try { return await this.readDocx(buffer); } catch { /* sigue a texto */ }
+      let lastError: any = null;
+      for (const reader of [() => this.readXlsx(buffer), () => this.readXlsxLoose(buffer)]) {
+        try { return await reader(); }
+        catch (error: any) {
+          if (error instanceof BadRequestException && /hojas/.test(error.message)) throw error;
+          lastError = error;
+        }
       }
+      if (ext === 'docx') {
+        try { return await this.readDocx(buffer); } catch { /* sigue abajo */ }
+      }
+      if (['xlsx', 'xls', 'ods'].includes(ext)) {
+        throw new BadRequestException('El Excel está dañado o usa funciones no soportadas. Prueba guardarlo de nuevo como .xlsx o usa la plantilla.');
+      }
+      try { return await this.readDocx(buffer); }
+      catch { throw new BadRequestException('No se pudo leer el archivo como Excel ni como Word.'); }
     }
     if (ext === 'docx' || looksZip) {
       try { return await this.readDocx(buffer); } catch { /* sigue a texto */ }
@@ -170,6 +216,14 @@ export class InventoryFilesService {
     return 0;
   }
 
+  private slugSku(name: string, taken: Set<string>): string {
+    const base = (name.normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 20) || 'ITEM');
+    let candidate = base;
+    let n = 2;
+    while (taken.has(candidate.toLowerCase())) candidate = `${base}-${n++}`;
+    return candidate;
+  }
+
   async mapAssist(buffer: Buffer, filename: string, model?: string) {
     if (!this.ai) throw new BadRequestException('El asistente IA no está disponible en este servidor.');
     let matrix: Matrix;
@@ -190,7 +244,7 @@ export class InventoryFilesService {
     return { headers, mapping, samples: samples.length };
   }
 
-  async previewImport(companyId: string, buffer: Buffer, filename: string, overrides?: { mapping?: Record<string, number | null> }) {
+  async previewImport(companyId: string, buffer: Buffer, filename: string, overrides?: { mapping?: Record<string, number | null>; createMissing?: boolean }) {
     let matrix: Matrix;
     try { matrix = await this.readMatrix(buffer, filename); }
     catch (error: any) {
@@ -228,6 +282,8 @@ export class InventoryFilesService {
     const byBarcode = new Map(products.filter((p) => p.barcode).map((p) => [String(p.barcode).toLowerCase(), p]));
     const byName = new Map(products.map((p) => [p.name.toLowerCase(), p]));
     const balanceByKey = new Map(balances.map((b) => [`${b.productId}:${b.warehouseId}`, Number(b.quantity)]));
+    const skuSet = new Set(products.map((p) => p.sku.toLowerCase()));
+    const seenSkus = new Set<string>();
     const out: InventoryImportRow[] = [];
     const seen = new Set<string>();
     rows.forEach((cells, i) => {
@@ -259,7 +315,22 @@ export class InventoryFilesService {
       let warehouseDefaulted = false;
       if (!warehouse) { warehouse = defaultWarehouse; warehouseDefaulted = true; guessed.push(`bodega por defecto: ${defaultWarehouse.name}`); }
       const row: InventoryImportRow = { line, sku: skuText || nameText || barcodeText, countedQuantity, valid: true, guessed, warehouseDefaulted };
-      if (!product) { row.valid = false; row.error = 'No se encontró el producto por SKU, código de barras ni nombre. Revísalo o créalo antes.'; }
+      const canCreate = Boolean(overrides?.createMissing) && (skuText || nameText) && Number.isFinite(countedQuantity) && (countedQuantity as number) >= 0;
+      if (!product && canCreate) {
+        const desiredSku = skuText || this.slugSku(nameText, seenSkus);
+        if (skuSet.has(desiredSku.toLowerCase())) {
+          row.valid = false;
+          row.error = 'Otro producto de esta empresa ya usa ese SKU; cámbialo en el archivo.';
+        } else {
+          row.valid = true;
+          row.willCreate = true;
+          row.newSku = desiredSku;
+          row.productName = nameText || desiredSku;
+          row.sku = desiredSku;
+          guessed.push('se creará el producto (precio y costo en 0)');
+          seenSkus.add(desiredSku.toLowerCase());
+        }
+      } else if (!product) { row.valid = false; row.error = 'No se encontró el producto por SKU, código de barras ni nombre. Revísalo o créalo antes.'; }
       else if (index.counted === undefined || !Number.isFinite(countedQuantity) || countedQuantity < 0) { row.valid = false; row.error = 'No se identificó una cantidad contada válida en la fila.'; }
       if (product) { row.productId = product.id; row.productName = product.name; if (!row.sku) row.sku = product.sku; }
       if (warehouse) { row.warehouseId = warehouse.id; row.warehouseName = warehouse.name; row.branchName = warehouse.branch.name; }
@@ -279,20 +350,31 @@ export class InventoryFilesService {
 
   async applyImport(companyId: string, userId: string, input: { rows: InventoryImportRow[]; note?: string }) {
     if (!Array.isArray(input.rows) || input.rows.length < 1 || input.rows.length > 5000) throw new BadRequestException('El conteo debe tener entre 1 y 5000 filas.');
-    if (input.rows.some((row) => !row.valid || !row.productId || !row.warehouseId || !Number.isFinite(Number(row.countedQuantity)))) {
+    if (input.rows.some((row) => !row.valid || (!row.productId && !row.willCreate) || !row.warehouseId || !Number.isFinite(Number(row.countedQuantity)))) {
       throw new BadRequestException('Corrige o excluye todas las filas inválidas antes de aplicar el conteo.');
     }
     const unique = new Set<string>();
     for (const row of input.rows) {
-      const key = `${row.productId}:${row.warehouseId}`;
+      const key = `${row.willCreate ? `new:${String(row.newSku || row.sku).toLowerCase()}` : row.productId}:${row.warehouseId}`;
       if (unique.has(key)) throw new BadRequestException('El mismo producto y bodega aparecen más de una vez.');
       unique.add(key);
     }
     const importId = `CONTEO-${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}`;
     return this.prisma.$transaction(async (tx) => {
-      const applied: { sku: string; counted: number; delta: number }[] = [];
+      const applied: { sku: string; counted: number; delta: number; created?: boolean }[] = [];
       for (const row of input.rows) {
-        const product = await tx.product.findFirst({ where: { id: row.productId, companyId, active: true }, select: { id: true, sku: true, cost: true } });
+        let productId = row.productId;
+        let created = false;
+        if (row.willCreate && !productId) {
+          const sku = row.newSku || row.sku;
+          if (!sku) throw new BadRequestException(`Fila ${row.line}: falta SKU para crear el producto.`);
+          const dup = await tx.product.findUnique({ where: { companyId_sku: { companyId, sku } } });
+          if (dup) throw new BadRequestException(`Fila ${row.line}: el SKU ${sku} ya existe; vuelve a cargar la vista previa.`);
+          const createdProduct = await tx.product.create({ data: { companyId, sku, name: (row.productName || sku).slice(0, 120), kind: 'STOCK', price: 0, cost: 0, taxRate: 0, stockMin: 0 } });
+          productId = createdProduct.id;
+          created = true;
+        }
+        const product = await tx.product.findFirst({ where: { id: productId, companyId, active: true }, select: { id: true, sku: true, cost: true } });
         const warehouse = await tx.warehouse.findFirst({ where: { id: row.warehouseId, branch: { companyId }, active: true }, select: { id: true } });
         if (!product || !warehouse) throw new BadRequestException(`Fila ${row.line}: producto o bodega no pertenece a esta empresa.`);
         const balance = await tx.inventoryBalance.findUnique({ where: { productId_warehouseId: { productId: product.id, warehouseId: warehouse.id } } });
@@ -311,10 +393,10 @@ export class InventoryFilesService {
         } else if (!balance) {
           await tx.inventoryBalance.create({ data: { productId: product.id, warehouseId: warehouse.id, quantity: counted } });
         }
-        applied.push({ sku: product.sku, counted, delta });
+        applied.push({ sku: product.sku, counted, delta, created });
       }
-      await tx.auditLog.create({ data: { companyId, userId, action: 'INVENTORY_COUNT_IMPORT', entity: 'Inventory', entityId: importId, metadata: { rows: applied.length, changed: applied.filter((row) => row.delta !== 0).length, note: input.note || null } } });
-      return { importId, rows: applied.length, changed: applied.filter((row) => row.delta !== 0).length, unchanged: applied.filter((row) => row.delta === 0).length, applied };
+      await tx.auditLog.create({ data: { companyId, userId, action: 'INVENTORY_COUNT_IMPORT', entity: 'Inventory', entityId: importId, metadata: { rows: applied.length, changed: applied.filter((row) => row.delta !== 0).length, created: applied.filter((row) => row.created).length, note: input.note || null } } });
+      return { importId, rows: applied.length, changed: applied.filter((row) => row.delta !== 0).length, unchanged: applied.filter((row) => row.delta === 0 && !row.created).length, created: applied.filter((row) => row.created).length, applied };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
