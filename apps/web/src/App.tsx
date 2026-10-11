@@ -375,6 +375,8 @@ function ModuleView({page,data,rows,search,setSearch,openCreate,openAction,colum
   const inventoryImportRef = React.useRef<HTMLInputElement>(null);
   const [uploadRow,setUploadRow]=useState<any>(null);
   const [inventoryPreview,setInventoryPreview]=useState<any>(null);
+  const [inventoryFile,setInventoryFile]=useState<File|null>(null);
+  const [inventoryMapping,setInventoryMapping]=useState<any>(null);
   const [inventoryAiStatus,setInventoryAiStatus]=useState<any>(null);
   const [inventoryAiResult,setInventoryAiResult]=useState<any>(null);
   const [inventoryAiError,setInventoryAiError]=useState('');
@@ -407,14 +409,28 @@ function ModuleView({page,data,rows,search,setSearch,openCreate,openAction,colum
     } catch(e:any) { setLocalMessage(e.message||'No se pudo subir la imagen.'); }
     finally { setLocalBusy(false); setUploadRow(null); if(uploadRef.current) uploadRef.current.value=''; }
   }
-  async function previewInventoryFile(file:File) {
+  async function previewInventoryFile(file:File, mapping?:any) {
     setLocalBusy(true);setLocalMessage('');setInventoryPreview(null);
     try {
       const form = new FormData(); form.append('file',file);
+      if(mapping) form.append('mapping',JSON.stringify(mapping));
       const result = await uploadFile('/inventory/import/preview',form);
-      setInventoryPreview(result);
+      setInventoryPreview(result); setInventoryFile(file);
+      if(mapping) setInventoryMapping(mapping);
     } catch(e:any) { setLocalMessage(e.message||'No se pudo leer el archivo de inventario.'); }
     finally { setLocalBusy(false); if(inventoryImportRef.current) inventoryImportRef.current.value=''; }
+  }
+  async function mapInventoryWithAi() {
+    if(!inventoryFile) { setLocalMessage('Elige primero el archivo a mapear.'); return; }
+    setLocalBusy(true);setLocalMessage('');
+    try {
+      const form = new FormData(); form.append('file',inventoryFile);
+      if(inventoryAiModel) form.append('model',inventoryAiModel);
+      const result = await uploadFile('/inventory/import/map-assist',form);
+      setLocalMessage(`IA sugiere columnas: ${Object.entries(result.mapping||{}).filter(([,v])=>v!==null).map(([k,v])=>`${k}→columna ${Number(v)+1}`).join(', ')||'sin coincidencias'}. Revisa la vista previa antes de aplicar.`);
+      await previewInventoryFile(inventoryFile, result.mapping||{});
+    } catch(e:any) { setLocalMessage(e.message||'No se pudo mapear con IA.'); }
+    finally { setLocalBusy(false); }
   }
   async function applyInventoryFile() {
     if(!inventoryPreview) return;
@@ -464,9 +480,9 @@ function ModuleView({page,data,rows,search,setSearch,openCreate,openAction,colum
     {localMessage&&<div className="success-banner"><CheckCircle2 size={16}/>{localMessage}<button onClick={()=>setLocalMessage('')}>Cerrar</button></div>}
     {page==='Inventario'&&<>
       <section className="panel inventory-tools">
-        <div className="inventory-tools-copy"><div className="inventory-tools-icon"><Boxes size={20}/></div><div><h3>Conteo físico y archivos</h3><p className="muted small">Importa Excel, Word o texto. Revisas las diferencias antes de tocar existencias.</p>{(dataAll?.products||[]).length===0&&<p className="field-help">Aún no hay productos: primero créalos en Productos (Nuevo registro o Importar CSV) y luego exporta la plantilla de conteo.</p>}</div></div>
+        <div className="inventory-tools-copy"><div className="inventory-tools-icon"><Boxes size={20}/></div><div><h3>Conteo físico y archivos</h3><p className="muted small">Sube el archivo como venga (Excel, Word o texto): el sistema ubica SKU, producto y cantidades, y la IA ayuda a mapear columnas raras.</p>{(dataAll?.products||[]).length===0&&<p className="field-help">Aún no hay productos: primero créalos en Productos (Nuevo registro o Importar CSV) y luego exporta la plantilla de conteo.</p>}</div></div>
         <div className="inventory-tool-actions">
-          <input ref={inventoryImportRef} type="file" accept=".xlsx,.docx,.csv,.txt,.tsv,.json" hidden onChange={e=>{const f=e.target.files?.[0];if(f)previewInventoryFile(f);}}/>
+          <input ref={inventoryImportRef} type="file" accept=".xlsx,.xls,.docx,.doc,.csv,.txt,.tsv,.json,.ods" hidden onChange={e=>{const f=e.target.files?.[0];if(f)previewInventoryFile(f);}}/>
           <button className="primary" disabled={localBusy} onClick={()=>inventoryImportRef.current?.click()}><Upload size={16}/>{localBusy?'Leyendo…':'Importar conteo'}</button>
           <div className="export-buttons"><span className="small muted">Exportar</span>{(['xlsx','docx','txt'] as const).map(f=><button key={f} className="secondary compact-format" disabled={localBusy} onClick={async()=>{try{await downloadFile(`/inventory/export?format=${f}`,`inventario-conteo.${f}`);}catch(e:any){setLocalMessage(e.message||'No se pudo exportar el inventario.');}}}>{f==='xlsx'?'Excel':f==='docx'?'Word':'Texto'}</button>)}</div>
           <button className="secondary ai-button" disabled={localBusy||!inventoryAiStatus?.configured} title={inventoryAiStatus?.configured?'Analiza rotación, mínimos y riesgos sin cambiar stock':'Configura el puente OpenCode en el servidor para habilitar IA'} onClick={runInventoryAi}><Sparkles size={16}/>{localBusy?'Analizando…':'Asistente IA'}</button>
@@ -486,8 +502,8 @@ function ModuleView({page,data,rows,search,setSearch,openCreate,openAction,colum
       </section>
       {inventoryPreview&&<section className="panel inventory-preview">
         <div className="panel-head"><div><h3>Vista previa del conteo</h3><p className="muted small">{inventoryPreview.filename} · {inventoryPreview.valid} válidas · {inventoryPreview.invalid} con error. Nada se ha guardado todavía.</p></div><button className="text-btn" onClick={()=>setInventoryPreview(null)}>Descartar</button></div>
-        <div className="table-wrap"><table><thead><tr><th>Fila</th><th>SKU / producto</th><th>Sucursal / bodega</th><th>Actual</th><th>Contado</th><th>Diferencia</th><th>Revisión</th></tr></thead><tbody>{inventoryPreview.rows.map((row:any)=><tr key={`${row.line}-${row.sku}`}><td>{row.line}</td><td><b>{row.sku||'—'}</b><small className="preview-product-name">{row.productName||''}</small></td><td>{row.branchName||'—'} / {row.warehouseName||'—'}</td><td>{row.expectedQuantity??'—'}</td><td>{row.countedQuantity??'—'}</td><td>{row.delta===undefined?'—':Number(row.delta)>0?`+${row.delta}`:row.delta}</td><td>{row.valid?<span className="pill green">Lista</span>:<span className="pill danger-pill">{row.error}</span>}</td></tr>)}</tbody></table></div>
-        <div className="preview-footer"><p className="field-help">Se aplicarán solo filas válidas; las filas con error se omiten. Si un saldo cambia después de esta vista previa, se cancela toda la operación y deberás importar de nuevo.</p><button className="primary" disabled={localBusy||inventoryPreview.valid===0} onClick={applyInventoryFile}><CheckCircle2 size={16}/>{localBusy?'Aplicando…':`Aplicar ${inventoryPreview.valid} filas válidas`}</button></div>
+        <div className="table-wrap"><table><thead><tr><th>Fila</th><th>SKU / producto</th><th>Sucursal / bodega</th><th>Actual</th><th>Contado</th><th>Diferencia</th><th>Revisión</th></tr></thead><tbody>{inventoryPreview.rows.map((row:any)=><tr key={`${row.line}-${row.sku}`}><td>{row.line}</td><td><b>{row.sku||'—'}</b><small className="preview-product-name">{row.productName||''}</small>{(row.guessed||[]).map((g:string)=><small key={g} className="preview-guess">{g}</small>)}</td><td>{row.branchName||'—'} / {row.warehouseName||'—'}{row.warehouseDefaulted&&<small className="preview-guess">bodega por defecto</small>}</td><td>{row.expectedQuantity??'—'}</td><td>{row.countedQuantity??'—'}</td><td>{row.delta===undefined?'—':Number(row.delta)>0?`+${row.delta}`:row.delta}</td><td>{row.valid?<span className="pill green">Lista</span>:<span className="pill danger-pill">{row.error}</span>}</td></tr>)}</tbody></table></div>
+        <div className="preview-footer"><p className="field-help">Se aplicarán solo filas válidas; las filas con error se omiten. Si un saldo cambia después de esta vista previa, se cancela toda la operación y deberás importar de nuevo.</p><div className="preview-actions">{inventoryAiStatus?.configured&&<button className="secondary" disabled={localBusy||!inventoryFile} onClick={mapInventoryWithAi}><Sparkles size={16}/>Mapear columnas con IA</button>}<button className="primary" disabled={localBusy||inventoryPreview.valid===0} onClick={applyInventoryFile}><CheckCircle2 size={16}/>{localBusy?'Aplicando…':`Aplicar ${inventoryPreview.valid} filas válidas`}</button></div></div>
       </section>}
       {inventoryAiError&&<div className="error banner">{inventoryAiError}<button onClick={()=>setInventoryAiError('')}>Cerrar</button></div>}
       {inventoryAiResult&&<section className="panel inventory-ai-result"><div className="panel-head"><div><p className="eyebrow">ASISTENTE DE INVENTARIO · {inventoryAiResult.model||''}</p><h3>{inventoryAiResult.kind==='restock'?'Plan de reposición':inventoryAiResult.kind==='pricing'?'Precios y promociones':inventoryAiResult.kind==='copy'?'Descripción comercial':'Oportunidades y alertas'}</h3></div><button className="text-btn" onClick={()=>setInventoryAiResult(null)}>Cerrar</button></div>

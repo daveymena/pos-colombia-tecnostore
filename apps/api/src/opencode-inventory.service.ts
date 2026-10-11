@@ -61,8 +61,7 @@ export class OpenCodeInventoryService {
     };
   }
 
-  async listFreeModels() {
-    if (this.modelsCache && Date.now() - this.modelsCache.at < 3600000) return { models: this.modelsCache.ids, cached: true };
+  async listFreeModels() {    if (this.modelsCache && Date.now() - this.modelsCache.at < 3600000) return { models: this.modelsCache.ids, cached: true };
     if (!this.apiKey) throw new ServiceUnavailableException('El puente OpenCode no está configurado en el servidor.');
     let response: Response;
     try {
@@ -144,6 +143,18 @@ export class OpenCodeInventoryService {
         daysOfCover: velocity > 0 ? Math.round((stock / velocity) * 10) / 10 : null,
       };
     });
+  }
+
+  async assistJson(system: string, prompt: string, model?: string, maxTokens = 600) {
+    const { text } = await this.complete(system, prompt, model, maxTokens);
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (start < 0 || end <= start) throw new ServiceUnavailableException('El modelo no devolvió un mapeo JSON válido.');
+    try {
+      return JSON.parse(text.slice(start, end + 1));
+    } catch {
+      throw new ServiceUnavailableException('El modelo no devolvió un mapeo JSON válido.');
+    }
   }
 
   async inventoryInsights(companyId: string, model?: string) {

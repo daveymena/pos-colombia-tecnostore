@@ -37,7 +37,7 @@ Si el formulario usa Git URL en vez de la integración, usa `https://github.com/
    - `NODE_ENV` = `production`
    - `OPENCODE_API_URL` = `https://opencode.ai/zen/v1` (o URL interna del puente OpenAI-compatible)
    - `OPENCODE_API_KEY` = clave de OpenCode Zen guardada como secreto en EasyPanel; vacío deshabilita IA
-   - `OPENCODE_MODEL` = `deepseek-v4-flash-free` u otro ID gratuito habilitado en la cuenta
+   - `OPENCODE_MODEL` = `mimo-v2.6-flash-free` u otro ID gratuito vigente en la cuenta (verificados: `mimo-v2.6-flash-free`, `nemotron-3.5-lightning-free`, `muse-spark-1.3-contributor-free`; DeepSeek libre ya no existe)
    - `ENABLE_SWAGGER` = `false` (predeterminado; solo actívalo temporalmente si necesitas la documentación)
 4. **Storage → Add Volume**: nombre `pos-uploads`, ruta `/app/uploads` (las imágenes sobreviven a redeploys).
 5. Deploy. La imagen raíz ejecuta `prisma migrate deploy` al arrancar y publica la web en `/` y API en `/api`. Health: `GET /api/health`.
@@ -58,7 +58,7 @@ La web ya viene en la imagen de `tiendapost`; no hace falta crear una segunda ap
 
 ## Importación y exportación de inventario
 
-- En **Inventario → Importar conteo**, admite `.xlsx`, `.docx`, `.csv`, `.txt`, `.tsv` y `.json` (máx. 10 MB).
+- En **Inventario → Importar conteo**, admite `.xlsx`, `.docx`, `.csv`, `.txt`, `.tsv` y `.json` (máx. 10 MB). No exige el formato exacto de la plantilla: detecta la fila de encabezados aunque haya texto encima, acepta sinónimos (código, nombre, cant., existencia), números en formato colombiano (`1.234,5`) o con moneda, ubica el producto por SKU, código de barras o nombre, y usa la primera bodega si el archivo no la indica (la vista previa lo avisa). Si las columnas son muy distintas, usa **Mapear columnas con IA**.
 - Muestra una vista previa de stock actual, conteo físico, diferencia y errores. Solo aplica las filas válidas después de confirmar; si el stock cambió mientras revisabas, rechaza todo el lote y pide importar de nuevo.
 - Exporta Excel, Word, texto tabulado, CSV o JSON. Edita `cantidadContada` y conserva `sku`, `bodega`/`sucursal` y `warehouseId` al reimportar.
 - Cada cambio crea un movimiento de ajuste auditado `CONTEO-*`; nunca sobrescribe stock sin registrar el kardex.

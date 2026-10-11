@@ -116,16 +116,34 @@ export class AppController {
     res.send(result.buffer);
   }
   @ApiBearerAuth() @Post('inventory/import/preview') @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }))
-  async previewInventoryImport(@Headers('authorization') auth: string, @UploadedFile() file: any) {
+  async previewInventoryImport(@Headers('authorization') auth: string, @UploadedFile() file: any, @Body() body: any) {
     const c = await this.context(auth); this.roles(c, ['ADMIN', 'MANAGER', 'INVENTORY']);
     if (!file) throw new BadRequestException('Adjunta un archivo Excel, Word, CSV, TXT o JSON.');
     const ext = String(file.originalname || '').toLowerCase().split('.').pop() || '';
-    if (!['xlsx', 'docx', 'csv', 'txt', 'tsv', 'json'].includes(ext)) throw new BadRequestException('Formato no admitido. Usa .xlsx, .docx, .csv, .txt, .tsv o .json.');
-    return this.inventoryFiles.previewImport(c.companyId, file.buffer, file.originalname);
+    if (!['xlsx', 'xls', 'docx', 'doc', 'csv', 'txt', 'tsv', 'json', 'ods'].includes(ext)) throw new BadRequestException('Formato no admitido. Usa Excel (.xlsx), Word (.docx), CSV, TXT o JSON.');
+    let mapping: Record<string, number | null> | undefined;
+    if (body?.mapping) {
+      try {
+        const parsed = JSON.parse(String(body.mapping));
+        mapping = {};
+        for (const key of ['sku', 'name', 'barcode', 'warehouseId', 'warehouse', 'branch', 'counted']) {
+          const value = parsed?.[key];
+          if (value === null || value === undefined || value === '') mapping[key] = null;
+          else if (Number.isInteger(Number(value)) && Number(value) >= 0) mapping[key] = Number(value);
+        }
+      } catch { throw new BadRequestException('El mapeo de columnas no es un JSON válido.'); }
+    }
+    return this.inventoryFiles.previewImport(c.companyId, file.buffer, file.originalname, mapping ? { mapping } : undefined);
   }
   @ApiBearerAuth() @Post('inventory/import/apply') async applyInventoryImport(@Headers('authorization') auth: string, @Body() body: any) {
     const c = await this.context(auth); this.roles(c, ['ADMIN', 'MANAGER', 'INVENTORY']);
     return this.inventoryFiles.applyImport(c.companyId, c.sub, body);
+  }
+  @ApiBearerAuth() @Post('inventory/import/map-assist') @UseInterceptors(FileInterceptor('file', { storage: memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } }))
+  async mapAssistInventoryImport(@Headers('authorization') auth: string, @UploadedFile() file: any, @Body() body: any) {
+    const c = await this.context(auth); this.roles(c, ['ADMIN', 'MANAGER', 'INVENTORY']);
+    if (!file) throw new BadRequestException('Adjunta el archivo a mapear.');
+    return this.inventoryFiles.mapAssist(file.buffer, file.originalname, body?.model ? String(body.model) : undefined);
   }
   @ApiBearerAuth() @Get('inventory/ai/status') async inventoryAiStatus(@Headers('authorization') auth: string) {
     const c = await this.context(auth); this.roles(c, ['ADMIN', 'MANAGER', 'INVENTORY', 'ACCOUNTANT']);
