@@ -61,6 +61,11 @@ export class OpenCodeInventoryService {
     ? ''
     : normalizeOllamaBase(process.env.OLLAMA_URL || 'http://ollama_ollama:11434/v1');
   private readonly ollamaModel = (process.env.OLLAMA_MODEL || 'qwen3:1.7b').trim();
+  // Timeouts cortos estilo bot-agente-ventas (respuestas de 150 tokens):
+  // el chat nunca debe dejar al usuario "pensando" minutos. Máximo de
+  // intentos por llamada para no recorrer 16 modelos a 60s cada uno.
+  private readonly callTimeoutMs = Math.min(180000, Math.max(15000, Number(process.env.LLM_TIMEOUT_MS || 45000)));
+  private readonly maxAttempts = Math.min(16, Math.max(1, Number(process.env.LLM_MAX_ATTEMPTS || 6)));
   private modelsCache: { at: number; ids: string[] } | null = null;
 
   constructor(private readonly prisma: PrismaService) {}
@@ -152,8 +157,11 @@ export class OpenCodeInventoryService {
     const providers = this.providers(requestedModel);
     if (!providers.length) throw new ServiceUnavailableException('El puente OpenCode no está configurado en el servidor.');
     const errors: string[] = [];
+    let attempts = 0;
     for (const p of providers) {
       for (const model of p.models) {
+        if (attempts >= this.maxAttempts) break;
+        attempts++;
         const tag = `${p.kind}:${model}`;
         let response: Response;
         try {
@@ -164,10 +172,10 @@ export class OpenCodeInventoryService {
               model, temperature: 0.2, max_tokens: maxTokens,
               messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
             }),
-            signal: AbortSignal.timeout(90000),
+            signal: AbortSignal.timeout(this.callTimeoutMs),
           });
         } catch {
-          errors.push(`${tag}: sin conexión`);
+          errors.push(`${tag}: sin conexión (${Math.round(this.callTimeoutMs / 1000)}s)`);
           continue;
         }
         if (response.status === 401 && p.kind === 'zen') throw new ServiceUnavailableException('La clave de OpenCode fue rechazada (HTTP 401). Revisa OPENCODE_API_KEY.');
@@ -188,7 +196,7 @@ export class OpenCodeInventoryService {
         errors.push(`${tag}: respuesta vacía`);
       }
     }
-    throw new ServiceUnavailableException(`Ningún modelo gratuito respondió. Detalle: ${errors.slice(0, 4).join(' | ')}`);
+    throw new ServiceUnavailableException(`Ningún modelo respondió tras ${attempts} intentos. Detalle: ${errors.slice(0, 4).join(' | ')}`);
   }
 
   private async snapshot(companyId: string) {
@@ -227,7 +235,9 @@ export class OpenCodeInventoryService {
     });
   }
 
-  async assistText(system: string, prompt: string, model?: string, maxTokens = 800) {
+  // El chat operativo usa respuestas cortas (como el bot: 150 tokens):
+  // saludos y resúmenes no necesitan 800 tokens en modelos pequeños.
+  async assistText(system: string, prompt: string, model?: string, maxTokens = 400) {
     return this.complete(system, prompt, model, maxTokens);
   }
 

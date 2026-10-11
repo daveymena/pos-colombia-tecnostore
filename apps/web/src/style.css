@@ -23,3 +23,16 @@
 @media(max-width:600px){.ai-taskbar{align-items:stretch;flex-direction:column}.ai-tasks{display:grid;grid-template-columns:1fr 1fr}.ai-options select{max-width:none;width:100%}}
 .assistant-panel{display:flex;flex-direction:column;gap:12px}.chat-log{display:flex;flex-direction:column;gap:10px;max-height:52vh;overflow:auto;padding:4px}.chat-msg{display:flex;gap:9px;align-items:flex-start}.chat-msg.user{flex-direction:row-reverse}.chat-avatar{width:30px;height:30px;border-radius:50%;background:#e7e5ff;color:#5c50c7;display:grid;place-items:center;font-weight:700;flex:none}.chat-msg.user .chat-avatar{background:#101b2d;color:#fff}.chat-bubble{background:#f4f6fb;border-radius:12px;padding:10px 13px;max-width:min(640px,100%);white-space:pre-wrap;font-size:13px;line-height:1.6;color:#273348}.chat-msg.user .chat-bubble{background:#5c50c7;color:#fff}.chat-bubble .pill{margin:4px 6px 0 0}.chat-input{display:flex;gap:8px}.chat-input input{flex:1;padding:12px;border:1px solid #e1e6ee;border-radius:10px;min-height:46px}
 @media(max-width:600px){.chat-log{max-height:60vh}}
+.chat-float{position:fixed;right:18px;bottom:18px;z-index:60;display:flex;flex-direction:column;align-items:flex-end;gap:10px}
+.chat-float-btn{width:54px;height:54px;border-radius:50%;background:#5c50c7;color:#fff;display:grid;place-items:center;border:0;cursor:pointer;box-shadow:0 8px 24px rgba(92,80,199,.45)}
+.chat-float-panel{width:min(380px,calc(100vw - 36px));background:#fff;border-radius:16px;box-shadow:0 16px 48px rgba(16,27,45,.25);overflow:hidden;display:flex;flex-direction:column}
+.chat-float-head{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:#101b2d;color:#fff}
+.chat-float-head>div:first-child{display:flex;align-items:center;gap:8px}
+.chat-float-head small{display:block;opacity:.7;font-size:11px}
+.chat-float-tools{display:flex;align-items:center;gap:8px}
+.chat-float-tools .check-label{color:#fff;font-size:12px;display:flex;align-items:center;gap:5px}
+.chat-float-tools .icon-btn{color:#fff}
+.chat-float-log{max-height:46vh;padding:10px 12px}
+.chat-float-panel .chat-input{padding:10px 12px;border-top:1px solid #eef1f6}
+.chat-float-panel .chat-input .primary{display:grid;place-items:center;min-width:46px}
+@media(max-width:600px){.chat-float{right:12px;bottom:12px}}
