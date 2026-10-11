@@ -42,13 +42,26 @@ npm run build               # api (nest build) y luego web (tsc --noEmit + vite)
 
 ## IA (no romper este contrato)
 
-- `POST /api/ai/assistant` `{message, execute?, model?}` — agente con
-  herramientas (buscar/crear/actualizar productos, **actualizar en lote**
-  `updateProductsBySearch` —máx 20 por mensaje—, promos, bodegas
-  (`listWarehouses`), stock, lowStock, salesToday). Con `execute:false`
-  (default) solo propone el plan. El asistente guarda memoria corta en
-  proceso (últimos 3 intercambios por empresa+usuario) para resolver
-  referencias como "esos"/"todos" en el mensaje siguiente.
+- `POST /api/ai/assistant` `{message, execute?, model?, confirmToken?}` —
+  agente operativo estilo Atlas (bot VentasPro):
+  - **Router de intención en código** (`detectIntent` en
+    `pos-assistant.service.ts`): sin verbo explícito de creación
+    ("crea/nuevo/agrega…") el modelo **no puede** crear; la intención
+    crear-vs-editar no depende del modelo (evita duplicados).
+  - Herramientas de **lote con transformación por producto** (calculada en
+    servidor, no por el modelo): `updateProductsBySearch`, `renameProducts
+    {search, from, to}`, `cleanupNames {search}` (quita "— anotación
+    original…" y "[variaciones…]"). Tope 200 por turno, autopaginado
+    interno (sin "repite").
+  - **Puerta de confirmación**: planes que tocan >10 ítems (o
+    destructivos: cleanup/rename/desactivar) NO se ejecutan de una;
+    devuelven `confirmToken` y esperan "sí" o el token (TTL 15 min).
+  - **Historial persistido en BD** (tabla `AssistantTurn`,
+    migración `0004_assistant_history`): últimos 10 intercambios por
+    empresa+usuario, sobrevive reinicios. `POST /api/ai/assistant/history`
+    lo borra (botón "Nueva conversación" en la UI).
+  - `execute:false` (default) solo propone el plan. Todo auditado con el
+    rol del usuario; nunca vende, cobra ni toca usuarios/facturación.
 - IA de inventario (solo lectura): `GET /api/inventory/ai/status|models`,
   `POST /api/inventory/ai/insights|restock|pricing|copy`.
 - Proveedor en `opencode-inventory.service.ts`: **OpenCode Server interno**

@@ -577,3 +577,16 @@ model Notification {
   company   Company  @relation(fields: [companyId], references: [id])
   @@index([companyId, readAt])
 }
+
+// Historial del asistente IA (estilo Atlas): sobrevive reinicios; la app lo
+// poda a los últimos 10 intercambios por empresa+usuario.
+model AssistantTurn {
+  id        String   @id @default(uuid())
+  companyId String
+  userId    String
+  role      String
+  text      String
+  createdAt DateTime @default(now())
+
+  @@index([companyId, userId, createdAt])
+}

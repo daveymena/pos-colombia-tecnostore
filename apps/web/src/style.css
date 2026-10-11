@@ -30,6 +30,7 @@
 .chat-float-head>div:first-child{display:flex;align-items:center;gap:8px}
 .chat-float-head small{display:block;opacity:.7;font-size:11px}
 .chat-float-tools{display:flex;align-items:center;gap:8px}
+.as-confirm-btn{margin-top:8px;padding:8px 14px;border-radius:8px;font-weight:600}
 .chat-float-tools .check-label{color:#fff;font-size:12px;display:flex;align-items:center;gap:5px}
 .chat-float-tools .icon-btn{color:#fff}
 .chat-float-log{max-height:46vh;padding:10px 12px}

@@ -211,6 +211,16 @@ export class AppController {
   @Post('ai/assistant') async assistantChat(@Headers('authorization') auth: string, @Body() body: any) {
     const c = await this.context(auth);
     if (!body?.message || String(body.message).trim().length < 2) throw new BadRequestException('Escribe un mensaje.');
-    return this.assistant.chat(c.companyId, c.sub, c.role, String(body.message), { execute: body?.execute === true, model: body?.model ? String(body.model) : undefined });
+    return this.assistant.chat(c.companyId, c.sub, c.role, String(body.message), {
+      execute: body?.execute === true,
+      model: body?.model ? String(body.model) : undefined,
+      confirmToken: body?.confirmToken ? String(body.confirmToken) : undefined,
+    });
+  }
+
+  @ApiBearerAuth() @Post('ai/assistant/history') async assistantClearHistory(@Headers('authorization') auth: string) {
+    const c = await this.context(auth);
+    await this.assistant.clearHistory(c.companyId, c.sub);
+    return { ok: true, message: 'Historial del asistente borrado.' };
   }
 }
