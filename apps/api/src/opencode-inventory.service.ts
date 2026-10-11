@@ -18,20 +18,13 @@ const FREE_MODELS = [
   'jev-1.13-free',
 ];
 
-function normalizeZenModelId(baseUrl: string, model: string) {
-  const id = model.trim();
-  if (baseUrl.includes('opencode.ai/zen')) return id.startsWith('opencode/') ? id.slice('opencode/'.length) : id;
-  return id;
-}
-
 @Injectable()
 export class OpenCodeInventoryService {
-  private readonly baseUrl = (process.env.OPENCODE_API_URL || 'https://opencode.ai/zen/v1').replace(/\/+$/, '');
-  private readonly defaultModel = normalizeZenModelId(
-    process.env.OPENCODE_API_URL || 'https://opencode.ai/zen/v1',
-    process.env.OPENCODE_MODEL || 'mimo-v2.6-flash-free',
-  );
-  private readonly apiKey = process.env.OPENCODE_API_KEY || '';
+  private readonly serverUrl = (process.env.OPENCODE_SERVER_URL || 'http://opencode1_oc-zen:4000').replace(/\/+$/, '');
+  private readonly defaultModel = process.env.OPENCODE_MODEL || 'mimo-v2.6-flash-free';
+  private readonly groqUrl = (process.env.GROQ_API_URL || 'https://api.groq.com/openai/v1').replace(/\/+$/, '');
+  private readonly groqKey = process.env.GROQ_API_KEY || '';
+  private readonly groqModel = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
   private modelsCache: { at: number; ids: string[] } | null = null;
 
   constructor(private readonly prisma: PrismaService) {}
@@ -41,73 +34,124 @@ export class OpenCodeInventoryService {
     const out: string[] = [];
     for (const raw of [requested, this.defaultModel, ...FREE_MODELS]) {
       if (!raw) continue;
-      const id = normalizeZenModelId(this.baseUrl, raw);
-      if (!FREE_MODELS.includes(id) && raw !== this.defaultModel) continue;
+      const id = raw.startsWith('opencode/') ? raw.slice('opencode/'.length) : raw;
+      if (!FREE_MODELS.includes(id) && !id.toLowerCase().includes('free') && raw !== this.defaultModel) continue;
       if (!seen.has(id)) { seen.add(id); out.push(id); }
     }
     return out;
   }
 
-  status() {
+  async status() {
+    let serverConnected = false;
+    let serverVersion = '';
+    try {
+      const response = await fetch(`${this.serverUrl}/global/health`, { signal: AbortSignal.timeout(5000) });
+      const body: any = response.ok ? await response.json() : null;
+      serverConnected = !!body?.healthy;
+      serverVersion = body?.version || '';
+    } catch { /* la función Groq puede seguir disponible aunque el OpenCode Server caiga */ }
     return {
-      configured: Boolean(this.apiKey),
-      provider: 'OpenCode Zen (OpenAI-compatible)',
+      configured: serverConnected || Boolean(this.groqKey),
+      provider: 'OpenCode Server interno + Groq gratuito de respaldo',
+      serverConnected,
+      serverVersion,
       model: this.defaultModel,
       fallbackModels: this.chain().slice(1, 4),
-      baseUrl: this.baseUrl,
-      message: this.apiKey
-        ? 'Asistente configurado. Las recomendaciones son de solo lectura; los precios promocionales solo se aplican si tú los confirmas.'
-        : 'Configura OPENCODE_API_URL, OPENCODE_API_KEY y OPENCODE_MODEL como variables secretas en EasyPanel para habilitar el asistente.',
+      fallbackConfigured: Boolean(this.groqKey),
+      message: serverConnected || this.groqKey
+        ? 'Asistente conectado. Prioriza OpenCode Server; usa Groq gratuito si Zen rechaza el free tier. Acciones solo al activar ejecución.'
+        : 'Configura OPENCODE_SERVER_URL o GROQ_API_KEY en EasyPanel para habilitar el asistente.',
     };
   }
 
-  async listFreeModels() {    if (this.modelsCache && Date.now() - this.modelsCache.at < 3600000) return { models: this.modelsCache.ids, cached: true };
-    if (!this.apiKey) throw new ServiceUnavailableException('El puente OpenCode no está configurado en el servidor.');
+  async listFreeModels() {
+    if (this.modelsCache && Date.now() - this.modelsCache.at < 3600000) return { models: this.modelsCache.ids, cached: true };
     let response: Response;
     try {
-      response = await fetch(`${this.baseUrl}/models`, { headers: { Authorization: `Bearer ${this.apiKey}` }, signal: AbortSignal.timeout(20000) });
+      response = await fetch(`${this.serverUrl}/provider`, { signal: AbortSignal.timeout(20000) });
     } catch {
-      throw new ServiceUnavailableException('No se pudo conectar con OpenCode Zen.');
+      if (this.groqKey) return { models: FREE_MODELS, cached: false };
+      throw new ServiceUnavailableException('No se pudo conectar con OpenCode Server.');
     }
-    if (!response.ok) throw new ServiceUnavailableException(`OpenCode Zen respondió HTTP ${response.status}.`);
+    if (!response.ok) {
+      if (this.groqKey) return { models: FREE_MODELS, cached: false };
+      throw new ServiceUnavailableException(`OpenCode Server respondió HTTP ${response.status}.`);
+    }
     const data: any = await response.json();
-    const ids: string[] = [...new Set(((data?.data || []) as any[]).map((m) => String(m?.id || '')).filter(Boolean))];
-    const free = ids.filter((id) => /free/i.test(id));
-    this.modelsCache = { at: Date.now(), ids: free.length ? free : FREE_MODELS };
+    const provider = (data?.all || data?.providers || []).find((p: any) => p.id === 'opencode');
+    const free = Array.isArray(provider?.free) ? provider.free.map(String) : Object.keys(provider?.models || {}).filter((id) => /free/i.test(id));
+    this.modelsCache = { at: Date.now(), ids: [...new Set([...free, ...FREE_MODELS])] };
     return { models: this.modelsCache.ids, cached: false };
   }
 
-  private async complete(system: string, prompt: string, requestedModel?: string, maxTokens = 1400) {
-    if (!this.apiKey) throw new ServiceUnavailableException('El puente OpenCode no está configurado en el servidor.');
-    const errors: string[] = [];
-    for (const model of this.chain(requestedModel)) {
-      let response: Response;
-      try {
-        response = await fetch(`${this.baseUrl}/chat/completions`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
-          body: JSON.stringify({
-            model, temperature: 0.2, max_tokens: maxTokens,
-            messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
-          }),
-          signal: AbortSignal.timeout(65000),
-        });
-      } catch {
-        errors.push(`${model}: sin conexión`);
-        continue;
-      }
-      if (response.status === 401) throw new ServiceUnavailableException('La clave de OpenCode fue rechazada (HTTP 401). Revisa OPENCODE_API_KEY.');
-      if ([400, 403, 404, 409, 410, 422, 429].includes(response.status)) {
-        errors.push(`${model}: no disponible (${response.status})`);
-        continue;
-      }
-      if (!response.ok) throw new ServiceUnavailableException(`OpenCode Zen respondió HTTP ${response.status}.`);
+  private async runOpenCode(model: string, system: string, prompt: string, maxTokens: number) {
+    let sessionId = '';
+    try {
+      const created = await fetch(`${this.serverUrl}/session`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'POS Assistant', model: { providerID: 'opencode', id: model } }),
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!created.ok) return { ok: false as const, status: created.status, error: `crear sesión HTTP ${created.status}` };
+      const session: any = await created.json();
+      sessionId = session.id;
+      if (!sessionId) return { ok: false as const, status: 500, error: 'OpenCode no devolvió ID de sesión' };
+      const response = await fetch(`${this.serverUrl}/session/${sessionId}/message`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: { providerID: 'opencode', modelID: model },
+          system,
+          tools: { bash: false, edit: false, read: false, write: false, grep: false, glob: false, task: false, webfetch: false, websearch: false },
+          parts: [{ type: 'text', text: prompt }],
+        }),
+        signal: AbortSignal.timeout(90000),
+      });
       const result: any = await response.json();
-      const content = result?.choices?.[0]?.message?.content;
-      if (typeof content === 'string' && content.trim()) return { model, text: content.trim() };
-      errors.push(`${model}: respuesta vacía`);
+      if (!response.ok) return { ok: false as const, status: response.status, error: result?.message || `HTTP ${response.status}` };
+      const apiError = result?.info?.error;
+      if (apiError) return { ok: false as const, status: apiError?.data?.statusCode || 502, error: apiError?.data?.responseBody || apiError?.data?.message || apiError.message || 'Error de modelo' };
+      const text = (result?.parts || []).filter((p: any) => p.type === 'text').map((p: any) => String(p.text || '')).join('\n').trim();
+      if (!text) return { ok: false as const, status: 502, error: 'OpenCode respondió sin texto' };
+      return { ok: true as const, model, text };
+    } catch (e: any) {
+      return { ok: false as const, status: 503, error: e?.message || 'OpenCode sin respuesta' };
+    } finally {
+      if (sessionId) {
+        fetch(`${this.serverUrl}/session/${sessionId}`, { method: 'DELETE', signal: AbortSignal.timeout(5000) }).catch(() => undefined);
+      }
     }
-    throw new ServiceUnavailableException(`Ningún modelo gratuito respondió. Detalle: ${errors.slice(0, 4).join(' | ')}`);
+  }
+
+  private async runGroq(system: string, prompt: string, maxTokens: number) {
+    if (!this.groqKey) return null;
+    const response = await fetch(`${this.groqUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.groqKey}` },
+      body: JSON.stringify({ model: this.groqModel, temperature: 0.2, max_tokens: maxTokens, messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }] }),
+      signal: AbortSignal.timeout(65000),
+    });
+    if (!response.ok) throw new ServiceUnavailableException(`El respaldo Groq respondió HTTP ${response.status}.`);
+    const result: any = await response.json();
+    const text = result?.choices?.[0]?.message?.content;
+    if (typeof text !== 'string' || !text.trim()) throw new ServiceUnavailableException('Groq respondió sin texto.');
+    return { model: `groq:${this.groqModel}`, text: text.trim() };
+  }
+
+  private async complete(system: string, prompt: string, requestedModel?: string, maxTokens = 1400) {
+    const errors: string[] = [];
+    for (const model of this.chain(requestedModel).slice(0, 4)) {
+      const result = await this.runOpenCode(model, system, prompt, maxTokens);
+      if (result.ok) return result;
+      errors.push(`${model}: ${result.error}`);
+      if (/FreeTierError|only be used from within OpenCode/i.test(result.error)) break;
+    }
+    try {
+      const fallback = await this.runGroq(system, prompt, maxTokens);
+      if (fallback) return fallback;
+    } catch (e: any) {
+      errors.push(e?.message || 'Groq no disponible');
+    }
+    throw new ServiceUnavailableException(`Fallaron OpenCode y el respaldo Groq: ${errors.slice(0, 4).join(' | ') || 'sin proveedor configurado'}`);
   }
 
   private async snapshot(companyId: string) {
