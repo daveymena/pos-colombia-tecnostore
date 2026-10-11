@@ -23,9 +23,11 @@ services:
       JWT_SECRET: ${JWT_SECRET:?Define JWT_SECRET de al menos 32 caracteres}
       UPLOADS_DIR: /app/uploads
       CORS_ORIGIN: ${CORS_ORIGIN:?Define CORS_ORIGIN con el dominio del frontend}
-      OPENCODE_API_URL: ${OPENCODE_API_URL:-https://opencode.ai/zen/v1}
-      OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}
+      OPENCODE_SERVER_URL: ${OPENCODE_SERVER_URL:-http://opencode1_oc-zen:4000}
       OPENCODE_MODEL: ${OPENCODE_MODEL:-mimo-v2.6-flash-free}
+      GROQ_API_URL: ${GROQ_API_URL:-https://api.groq.com/openai/v1}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-120b}
       ENABLE_SWAGGER: ${ENABLE_SWAGGER:-false}
       PORT: 3000
       NODE_ENV: production

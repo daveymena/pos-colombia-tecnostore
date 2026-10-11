@@ -3,7 +3,8 @@ WORKDIR /workspace
 COPY package.json package-lock.json ./
 COPY apps/api/package.json ./apps/api/package.json
 COPY apps/web/package.json ./apps/web/package.json
-RUN npm ci --no-audit --no-fund
+RUN npm config set fetch-retries 5 && npm config set fetch-retry-mintimeout 20000 && npm config set fetch-retry-maxtimeout 120000 && npm config set fetch-timeout 120000 && \
+  success=0; for i in 1 2 3 4 5; do echo "=== npm ci intento $i/5 ==="; if npm ci --no-audit --no-fund; then success=1; break; else echo "!!! intento $i falló, esperando 20s..."; sleep 20; fi; done; test $success -eq 1
 COPY . .
 RUN npm run db:generate
 ARG VITE_API_URL=/api
@@ -18,7 +19,8 @@ ENV NODE_ENV=production
 RUN apk add --no-cache openssl libc6-compat
 COPY apps/api/package.json ./package.json
 COPY apps/api/prisma ./prisma
-RUN npm install --omit=dev --no-audit --no-fund \
+RUN npm config set fetch-retries 5 && npm config set fetch-retry-mintimeout 20000 && npm config set fetch-retry-maxtimeout 120000 && npm config set fetch-timeout 120000 && \
+  success=0; for i in 1 2 3; do echo "=== npm install prod intento $i/3 ==="; if npm install --omit=dev --no-audit --no-fund; then success=1; break; else echo "!!! intento $i falló, esperando 20s..."; sleep 20; fi; done; test $success -eq 1 \
   && npx prisma generate \
   && mkdir -p /app/uploads
 COPY --from=build /workspace/apps/api/dist ./dist

@@ -35,9 +35,11 @@ Si el formulario usa Git URL en vez de la integración, usa `https://github.com/
    - `CORS_ORIGIN` = el dominio HTTPS de `tiendapost`
    - `UPLOADS_DIR` = `/app/uploads`
    - `NODE_ENV` = `production`
-   - `OPENCODE_API_URL` = `https://opencode.ai/zen/v1` (o URL interna del puente OpenAI-compatible)
-   - `OPENCODE_API_KEY` = clave de OpenCode Zen guardada como secreto en EasyPanel; vacío deshabilita IA
-   - `OPENCODE_MODEL` = `mimo-v2.6-flash-free` u otro ID gratuito vigente en la cuenta (verificados: `mimo-v2.6-flash-free`, `nemotron-3.5-lightning-free`, `muse-spark-1.3-contributor-free`; DeepSeek libre ya no existe)
+   - `OPENCODE_SERVER_URL` = `http://opencode1_oc-zen:4000` (servidor OpenCode interno)
+   - `OPENCODE_MODEL` = `mimo-v2.6-flash-free` u otro modelo gratuito de OpenCode
+   - `GROQ_API_URL` = `https://api.groq.com/openai/v1`
+   - `GROQ_API_KEY` = clave Groq del bot, guardada como secreto en EasyPanel
+   - `GROQ_MODEL` = `openai/gpt-oss-120b` (respaldo gratuito comprobado)
    - `ENABLE_SWAGGER` = `false` (predeterminado; solo actívalo temporalmente si necesitas la documentación)
 4. **Storage → Add Volume**: nombre `pos-uploads`, ruta `/app/uploads` (las imágenes sobreviven a redeploys).
 5. Deploy. La imagen raíz ejecuta `prisma migrate deploy` al arrancar y publica la web en `/` y API en `/api`. Health: `GET /api/health`.

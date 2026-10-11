@@ -134,6 +134,17 @@ export class AppService {
       return this.prisma.branch.findUnique({ where: { id: branch.id }, include: { warehouses: true, registers: true } });
     } catch (e: any) { if (e.code === 'P2002') throw new ConflictException('Ya existe una sucursal con ese nombre'); throw e; }
   }
+  async updateBranch(companyId: string, userId: string, id: string, body: any) {
+    const row = await this.prisma.branch.findFirst({ where: { id, companyId } }); if (!row) throw new NotFoundException('Sucursal no encontrada');
+    const data: any = {};
+    if (body.name !== undefined) { if (!String(body.name).trim()) throw new BadRequestException('El nombre es obligatorio'); data.name = String(body.name).trim(); }
+    for (const k of ['code', 'address', 'phone']) if (body[k] !== undefined) data[k] = body[k] || null;
+    if (!Object.keys(data).length) throw new BadRequestException('Nada que actualizar');
+    try {
+      await this.prisma.branch.update({ where: { id }, data }); await this.audit(companyId, userId, 'UPDATE', 'Branch', id, data);
+      return this.prisma.branch.findUnique({ where: { id }, include: { warehouses: true, registers: true } });
+    } catch (e: any) { if (e.code === 'P2002') throw new ConflictException('Ya existe una sucursal con ese nombre'); throw e; }
+  }
   async warehouses(companyId: string) {
     return this.prisma.warehouse.findMany({ where: { branch: { companyId }, active: true }, include: { branch: true }, orderBy: { name: 'asc' } });
   }
@@ -214,6 +225,14 @@ export class AppService {
   async createCategory(companyId: string, userId: string, body: any) {
     if (!body.name?.trim()) throw new BadRequestException('Nombre obligatorio');
     const result = await this.prisma.category.create({ data: { companyId, name: String(body.name).trim() } }); await this.audit(companyId, userId, 'CREATE', 'Category', result.id); return result;
+  }
+  async updateCategory(companyId: string, userId: string, id: string, body: any) {
+    const row = await this.prisma.category.findFirst({ where: { id, companyId } }); if (!row) throw new NotFoundException('Categoría no encontrada');
+    const data: any = {};
+    if (body.name !== undefined) { if (!String(body.name).trim()) throw new BadRequestException('El nombre es obligatorio'); data.name = String(body.name).trim(); }
+    if (body.active !== undefined) data.active = Boolean(body.active);
+    if (!Object.keys(data).length) throw new BadRequestException('Nada que actualizar');
+    const result = await this.prisma.category.update({ where: { id }, data }); await this.audit(companyId, userId, 'UPDATE', 'Category', id, data); return result;
   }
 
   async listCustomers(companyId: string, search?: string) {

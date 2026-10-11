@@ -67,6 +67,7 @@ export class AppController {
 
   @ApiBearerAuth() @Get('branches') async branches(@Headers('authorization') auth: string) { const c = await this.context(auth); return this.service.branches(c.companyId); }
   @ApiBearerAuth() @Post('branches') async createBranch(@Headers('authorization') auth: string, @Body() body: any) { const c = await this.context(auth); this.roles(c, ['ADMIN','MANAGER']); return this.service.createBranch(c.companyId, c.sub, body); }
+  @ApiBearerAuth() @Patch('branches/:id') async updateBranch(@Headers('authorization') auth: string, @Param('id') id: string, @Body() body: any) { const c = await this.context(auth); this.roles(c, ['ADMIN','MANAGER']); return this.service.updateBranch(c.companyId, c.sub, id, body); }
   @ApiBearerAuth() @Get('warehouses') async warehouses(@Headers('authorization') auth: string) { const c = await this.context(auth); return this.service.warehouses(c.companyId); }
   @ApiBearerAuth() @Get('registers') async registers(@Headers('authorization') auth: string) { const c = await this.context(auth); return this.service.registers(c.companyId); }
 
@@ -76,6 +77,7 @@ export class AppController {
 
   @ApiBearerAuth() @Get('categories') async categories(@Headers('authorization') auth: string) { const c = await this.context(auth); return this.service.categories(c.companyId); }
   @ApiBearerAuth() @Post('categories') async createCategory(@Headers('authorization') auth: string, @Body() body: any) { const c = await this.context(auth); this.roles(c, ['ADMIN','MANAGER','INVENTORY']); return this.service.createCategory(c.companyId, c.sub, body); }
+  @ApiBearerAuth() @Patch('categories/:id') async updateCategory(@Headers('authorization') auth: string, @Param('id') id: string, @Body() body: any) { const c = await this.context(auth); this.roles(c, ['ADMIN','MANAGER','INVENTORY']); return this.service.updateCategory(c.companyId, c.sub, id, body); }
   @ApiBearerAuth() @Get('products') async products(@Headers('authorization') auth: string, @Query() query: any) { const c = await this.context(auth); return this.service.listProducts(c.companyId, query); }
   @ApiBearerAuth() @Post('products') async createProduct(@Headers('authorization') auth: string, @Body() body: any) { const c = await this.context(auth); this.roles(c, ['ADMIN','MANAGER','INVENTORY']); return this.service.createProduct(c.companyId, c.sub, body); }
   @ApiBearerAuth() @Patch('products/:id') async updateProduct(@Headers('authorization') auth: string, @Param('id') id: string, @Body() body: any) { const c = await this.context(auth); this.roles(c, ['ADMIN','MANAGER','INVENTORY']); return this.service.updateProduct(c.companyId, c.sub, id, body); }
