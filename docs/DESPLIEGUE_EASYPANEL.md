@@ -67,6 +67,8 @@ La web ya viene en la imagen de `tiendapost`; no hace falta crear una segunda ap
 
 Cuando estén configuradas las variables del puente, **Inventario → Análisis IA** analiza mínimos, valor al costo y salidas de los últimos 30 días. Envía datos agregados de producto e inventario, sin información de clientes ni credenciales. Es de solo lectura: no crea compras ni modifica productos o existencias. Si el proveedor falla o no tiene clave, el POS sigue funcionando sin IA.
 
+La sección **Asistente IA** (chat operativo estilo Atlas) crea productos, fija precios y promociones, ajusta inventario y consulta ventas o stock bajo con lenguaje normal. Tiene el interruptor **Ejecutar acciones** apagado por defecto (solo propone el plan); al activarlo ejecuta con tu usuario y rol, todo auditado. Nunca vende, cobra ni toca usuarios o facturación. Modelos gratuitos vigentes verificados: `mimo-v2.6-flash-free`, `nemotron-3.5-lightning-free`, `muse-spark-1.3-contributor-free` (DeepSeek libre ya no existe).
+
 ## 5. Verificación post-despliegue (checklist)
 
 - [ ] `https://api.tudominio.com/api/health` → `{"ok":true}`.
