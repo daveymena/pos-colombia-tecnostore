@@ -8,6 +8,8 @@ COPY . .
 RUN npm run db:generate
 ARG VITE_API_URL=/api
 ENV VITE_API_URL=${VITE_API_URL}
+ARG GIT_SHA=local
+ENV GIT_SHA=${GIT_SHA}
 RUN npm run build
 
 FROM node:20-alpine AS production

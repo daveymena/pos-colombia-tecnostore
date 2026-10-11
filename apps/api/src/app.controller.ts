@@ -52,7 +52,7 @@ export class AppController {
 
   @Get('health') async health() {
     await this.prisma.$queryRaw`SELECT 1`;
-    return { ok: true, service: 'pos-api', timestamp: new Date().toISOString() };
+    return { ok: true, service: 'pos-api', commit: process.env.GIT_SHA || 'local', timestamp: new Date().toISOString() };
   }
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('auth/login') login(@Body() body: { email: string; password: string }) { return this.service.login(body.email, body.password); }
