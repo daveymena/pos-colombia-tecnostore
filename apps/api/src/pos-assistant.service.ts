@@ -4,8 +4,11 @@ import { OpenCodeInventoryService } from './opencode-inventory.service';
 
 const WRITE_ROLES = ['ADMIN', 'MANAGER', 'INVENTORY'];
 const MAX_ACTIONS = 5;
+const MAX_BULK = 20;
+const MEMORY_TURNS = 3;
 
-const SYSTEM = `Eres el asistente operativo de un POS para tienda de tecnología en Colombia. Respondes en español.
+const SYSTEM = `Eres el asistente operativo de un POS para tienda de tecnología en Colombia. Respondes en español, breve y directo.
+Recibes el historial reciente de esta conversación: úsalo para resolver referencias como "esos", "todos los", "cámbialos" sin volver a pedir datos que ya te dieron.
 Tienes dos formas de responder:
 1. TEXTO LIBRE: saludos, preguntas de cómo hacer algo, o pedidos fuera de tus herramientas.
 2. BLOQUE DE ACCIÓN: si piden crear, actualizar, consultar o ajustar datos, responde ÚNICAMENTE con este bloque, sin otro texto:
@@ -13,17 +16,19 @@ Tienes dos formas de responder:
 {"actions":[{"tool":"searchProducts","args":{"search":"cafe"}}]}
 \`\`\`
 Herramientas disponibles (args entre llaves):
-- searchProducts {search?}: busca productos por nombre/SKU.
+- searchProducts {search?}: busca productos por nombre/SKU (muestra 10).
 - getProduct {sku | productId}: detalle de un producto.
 - createProduct {name, sku?, price?, cost?, taxRate?, stockMin?, barcode?, category?}: crea un producto. name obligatorio. Si no dan precio/costo usa 0 y avísalo en el resumen final (el modelo te devolverá el resultado para resumir).
-- updateProduct {sku | productId, price?, cost?, taxRate?, stockMin?, promoPrice?, name?, active?}: actualiza campos.
+- updateProduct {sku | productId, price?, cost?, taxRate?, stockMin?, promoPrice?, name?, active?, category?}: actualiza UN producto. category acepta nombre o id.
+- updateProductsBySearch {search, name?, price?, cost?, taxRate?, stockMin?, promoPrice?, category?, active?}: actualiza EN LOTE todos los que coincidan con search (máx 20 por mensaje). Úsala cuando digan "todos los", "los de", "esos" en plural o peguen una lista de SKUs en el texto. category acepta nombre o id.
 - setPromo {sku | productId, promoPrice}: fija precio promocional (null o 0 lo quita).
 - listWarehouses {}: bodegas y sucursales disponibles.
 - adjustStock {sku | productId, quantity, direction: IN|OUT, note?, warehouse?, warehouseId?}: ajusta existencias con motivo.
 - lowStock {}: productos en mínimo o por debajo.
 - salesToday {}: resumen de ventas del día.
 Reglas estrictas:
-- Máximo 5 acciones por mensaje. Si piden más, haz las 5 primeras y pide continuar.
+- Máximo 5 acciones por mensaje (un lote cuenta como 1). Si piden más, haz las 5 primeras y pide continuar.
+- Si el usuario confirma o repite con más datos ("sí", "todos", "dale", "solo eso"), usa el historial y ejecuta: no pidas de nuevo lo que ya sabes.
 - Cantidades y precios siempre mayores o iguales a cero; quantity de adjustStock siempre positiva (la dirección la da direction).
 - Si falta un dato obligatorio (por ejemplo el nombre al crear), NO uses el bloque: pide el dato en texto. Si hay varias bodegas, pregunta cuál antes de ajustar.
 - Nunca inventes SKU: si no dan SKU al crear, genera uno corto en MAYÚSCULAS derivado del nombre (máx 20 caracteres, sin espacios).
@@ -31,10 +36,29 @@ Reglas estrictas:
 - No vendes, no cobras, no cierras caja, no tocas usuarios ni facturación electrónica: para eso indica la pantalla correspondiente.`;
 
 type ChatAction = { tool: string; args: Record<string, any> };
+type ChatTurn = { from: 'user' | 'ai'; text: string };
 
 @Injectable()
 export class PosAssistantService {
   constructor(private readonly app: AppService, private readonly ai: OpenCodeInventoryService) {}
+
+  // Memoria corta por usuario (últimos 3 intercambios): resuelve "esos",
+  // "todos", "cámbialos" sin pedir los datos otra vez. En memoria del
+  // proceso; si hay varias réplicas cada una guarda la suya.
+  private readonly history = new Map<string, ChatTurn[]>();
+
+  private pushTurn(key: string, turn: ChatTurn) {
+    const arr = this.history.get(key) || [];
+    arr.push(turn);
+    while (arr.length > MEMORY_TURNS * 2) arr.shift();
+    this.history.set(key, arr);
+  }
+
+  private historyBlock(key: string) {
+    const arr = this.history.get(key) || [];
+    if (!arr.length) return '';
+    return `\nHistorial reciente con este usuario:\n${arr.map((t) => `${t.from === 'user' ? 'Usuario' : 'Asistente'}: ${t.text.slice(0, 500)}`).join('\n')}\n`;
+  }
 
   private parseActions(text: string): ChatAction[] | null {
     const fence = text.match(/```json\s*([\s\S]*?)```/i) || text.match(/```\s*([\s\S]*?)```/);
@@ -59,6 +83,15 @@ export class PosAssistantService {
       throw new BadRequestException(`Hay ${list.length} coincidencias para "${args.sku}"; precisa el SKU.`);
     }
     throw new BadRequestException('Indica el SKU o producto.');
+  }
+
+  private async resolveCategoryId(companyId: string, wanted: any) {
+    if (wanted === undefined || wanted === null || wanted === '') return undefined;
+    const name = String(wanted);
+    const cats = (await this.app.categories(companyId)) as any[];
+    const match = cats.find((c) => c.id === name || c.name.toLowerCase() === name.toLowerCase());
+    if (!match) throw new BadRequestException(`La categoría "${name}" no existe; créala primero en Categorías o usa una existente (${cats.slice(0, 8).map((c) => c.name).join(', ') || 'sin categorías'}).`);
+    return match.id;
   }
 
   private async runAction(companyId: string, userId: string, role: string, action: ChatAction): Promise<{ ok: boolean; tool: string; summary: string }> {
@@ -130,9 +163,35 @@ export class PosAssistantService {
           const id = await this.resolveProductId(companyId, args);
           const patch: any = {};
           for (const key of ['name', 'price', 'cost', 'taxRate', 'stockMin', 'promoPrice', 'barcode', 'active']) if (args[key] !== undefined) patch[key] = args[key];
+          if (args.category !== undefined || args.categoryId !== undefined) patch.categoryId = await this.resolveCategoryId(companyId, args.categoryId ?? args.category);
           if (!Object.keys(patch).length) throw new BadRequestException('Nada que actualizar.');
           const updated: any = await this.app.updateProduct(companyId, userId, id, patch);
           return { ok: true, tool: action.tool, summary: `Actualizado ${updated.sku}: ${Object.keys(patch).join(', ')}.` };
+        }
+        case 'updateProductsBySearch': {
+          if (!WRITE_ROLES.includes(role)) throw new ForbiddenException('Tu rol no puede modificar productos ni inventario.');
+          const search = String(args.search || '').trim();
+          if (!search) throw new BadRequestException('Indica el texto a buscar (search).');
+          const list = (await this.app.listProducts(companyId, { search })) as any[];
+          if (!list.length) return { ok: true, tool: action.tool, summary: `Sin coincidencias para "${search}".` };
+          const patch: any = {};
+          for (const key of ['name', 'price', 'cost', 'taxRate', 'stockMin', 'promoPrice', 'barcode', 'active']) if (args[key] !== undefined) patch[key] = args[key];
+          if (args.category !== undefined || args.categoryId !== undefined) patch.categoryId = await this.resolveCategoryId(companyId, args.categoryId ?? args.category);
+          if (!Object.keys(patch).length) throw new BadRequestException('Nada que actualizar: indica precio, nombre, categoría, etc.');
+          const targets = list.slice(0, MAX_BULK);
+          let ok = 0;
+          const fails: string[] = [];
+          for (const p of targets) {
+            try {
+              await this.app.updateProduct(companyId, userId, p.id, patch);
+              ok++;
+            } catch (e: any) {
+              fails.push(`${p.sku}: ${e?.message || 'error'}`);
+            }
+          }
+          const rest = list.length > targets.length ? ` Hay ${list.length} en total; repite el pedido para continuar con los demás.` : '';
+          const err = fails.length ? ` Fallos: ${fails.slice(0, 3).join(' | ')}` : '';
+          return { ok: fails.length === 0, tool: action.tool, summary: `Actualizados ${ok}/${targets.length} de "${search}" (${Object.keys(patch).join(', ')}).${rest}${err}` };
         }
         case 'listWarehouses': {
           const list: any[] = await this.app.warehouses(companyId);
@@ -158,11 +217,18 @@ export class PosAssistantService {
   async chat(companyId: string, userId: string, role: string, message: string, opts: { execute?: boolean; model?: string } = {}) {
     const clean = String(message || '').slice(0, 1000).trim();
     if (!clean) throw new BadRequestException('Escribe un mensaje.');
-    const first = await this.ai.assistText(SYSTEM, clean, opts.model);
+    const key = `${companyId}:${userId}`;
+    const first = await this.ai.assistText(`${SYSTEM}${this.historyBlock(key)}`, clean, opts.model);
     const actions = this.parseActions(first.text);
-    if (!actions || !actions.length) return { reply: first.text, model: first.model, executed: [] };
+    if (!actions || !actions.length) {
+      this.pushTurn(key, { from: 'user', text: clean });
+      this.pushTurn(key, { from: 'ai', text: first.text.slice(0, 500) });
+      return { reply: first.text, model: first.model, executed: [] };
+    }
     if (!opts.execute) {
       const preview = actions.map((a) => `• ${a.tool} ${Object.entries(a.args).map(([k, v]) => `${k}=${v}`).join(', ')}`).join('\n');
+      this.pushTurn(key, { from: 'user', text: clean });
+      this.pushTurn(key, { from: 'ai', text: `Plan propuesto (sin ejecutar): ${preview.slice(0, 400)}` });
       return {
         reply: `Puedo hacerlo, pero el modo ejecución está apagado. Esto es lo que haría:\n${preview}\n\nActiva “Ejecutar acciones” y repite el mensaje para aplicarlo. Nada se ha modificado.`,
         model: first.model, executed: [], proposed: actions,
@@ -175,6 +241,8 @@ export class PosAssistantService {
       `Resultado de acciones JSON:\n${JSON.stringify(executed)}`,
       opts.model,
     );
+    this.pushTurn(key, { from: 'user', text: clean });
+    this.pushTurn(key, { from: 'ai', text: `Acciones: ${executed.map((e) => `${e.tool}=${e.ok ? 'ok' : 'falló'}`).join(', ')}. ${second.text.slice(0, 400)}` });
     return { reply: second.text, model: second.model, executed };
   }
 }

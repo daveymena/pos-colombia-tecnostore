@@ -3,25 +3,27 @@ import { PrismaService } from './prisma.service';
 
 // Modelos gratuitos verificados en OpenCode Zen (sufijo -free, 2026-10-11).
 // DeepSeek libre ya no existe: no usar deepseek-v4-flash-free.
+// Orden = orden de intento: los más capaces primero.
 const FREE_MODELS = [
-  'mimo-v2.6-flash-free',
   'nemotron-3.5-lightning-free',
-  'nemotron-3-ultra-free',
-  'muse-spark-1.3-contributor-free',
-  'muse-spark-1.2-contributor-free',
-  'ling-3.1-flash-free',
-  'ling-3.0-flash-fin-free',
+  'mimo-v2.6-flash-free',
   'step-5-preview-free',
   'longcat-2.5-preview-free',
+  'ling-3.1-flash-free',
+  'muse-spark-1.3-contributor-free',
+  'muse-spark-1.2-contributor-free',
+  'ling-3.0-flash-fin-free',
   'space-bunny-free',
   'exo-free',
   'jev-1.13-free',
+  // Último: suele devolver 403 fuera del runtime de OpenCode.
+  'nemotron-3-ultra-free',
 ];
 
 @Injectable()
 export class OpenCodeInventoryService {
   private readonly serverUrl = (process.env.OPENCODE_SERVER_URL || 'http://opencode1_oc-zen:4000').replace(/\/+$/, '');
-  private readonly defaultModel = process.env.OPENCODE_MODEL || 'mimo-v2.6-flash-free';
+  private readonly defaultModel = process.env.OPENCODE_MODEL || FREE_MODELS[0];
   private readonly groqUrl = (process.env.GROQ_API_URL || 'https://api.groq.com/openai/v1').replace(/\/+$/, '');
   private readonly groqKey = process.env.GROQ_API_KEY || '';
   private readonly groqModel = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
@@ -29,13 +31,17 @@ export class OpenCodeInventoryService {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  // Orden de modelos: el pedido por la UI, el configurado y la lista
+  // free. Admite modelos de pago si la cuenta los tiene: el elegido en la
+  // UI o OPENCODE_MODEL siempre entra en la cadena.
   private chain(requested?: string) {
     const seen = new Set<string>();
     const out: string[] = [];
     for (const raw of [requested, this.defaultModel, ...FREE_MODELS]) {
       if (!raw) continue;
       const id = raw.startsWith('opencode/') ? raw.slice('opencode/'.length) : raw;
-      if (!FREE_MODELS.includes(id) && !id.toLowerCase().includes('free') && raw !== this.defaultModel) continue;
+      const allowed = FREE_MODELS.includes(id) || id.toLowerCase().includes('free') || raw === this.defaultModel || raw === requested;
+      if (!allowed) continue;
       if (!seen.has(id)) { seen.add(id); out.push(id); }
     }
     return out;
@@ -80,7 +86,11 @@ export class OpenCodeInventoryService {
     const data: any = await response.json();
     const provider = (data?.all || data?.providers || []).find((p: any) => p.id === 'opencode');
     const free = Array.isArray(provider?.free) ? provider.free.map(String) : Object.keys(provider?.models || {}).filter((id) => /free/i.test(id));
-    this.modelsCache = { at: Date.now(), ids: [...new Set([...free, ...FREE_MODELS])] };
+    // Free primero (rotación), pero también los modelos de pago que la
+    // cuenta tenga habilitados, para poder elegirlos en el selector.
+    const all = Object.keys(provider?.models || {}).map(String);
+    const paid = all.filter((id) => !/free/i.test(id));
+    this.modelsCache = { at: Date.now(), ids: [...new Set([...free, ...paid, ...FREE_MODELS])] };
     return { models: this.modelsCache.ids, cached: false };
   }
 
