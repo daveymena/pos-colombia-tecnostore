@@ -3,7 +3,7 @@ import {
   LayoutDashboard, ShoppingCart, Package, Users, Boxes, FileText, LogOut, Search, Plus,
   RefreshCw, CircleDollarSign, TrendingUp, AlertTriangle, Menu, X, Truck, Wallet,
   ClipboardList, RotateCcw, Receipt, ChartNoAxesCombined, Settings, ShieldCheck, ArrowLeftRight,
-  Building2, UserCog, Tags, Landmark, BadgeDollarSign, History, CheckCircle2, Printer, Download, Upload, FileDown, Sparkles, Bot,
+  Building2, UserCog, Tags, Landmark, BadgeDollarSign, History, CheckCircle2, Printer, Download, Upload, FileDown, Sparkles, Bot, Send,
 } from 'lucide-react';
 
 const API = (import.meta as any).env.VITE_API_URL || 'http://localhost:3000/api';
@@ -83,18 +83,20 @@ export default function App() {
   const [asModel,setAsModel]=useState('');
   const [asModels,setAsModels]=useState<string[]>([]);
   const [asBusy,setAsBusy]=useState(false);
+  const [asOpen,setAsOpen]=useState(false);
 
   async function sendAssistant(e?:React.FormEvent) {
     if(e) e.preventDefault();
     const text=asInput.trim(); if(!text||asBusy) return;
     setAsMessages(m=>[...m,{from:'user',text}]); setAsInput(''); setAsBusy(true); setError('');
+    const ctrl=new AbortController(); const timer=setTimeout(()=>ctrl.abort(),150000);
     try {
       const body:any={message:text,execute:asExecute}; if(asModel) body.model=asModel;
-      const res=await request('/ai/assistant',{method:'POST',body:JSON.stringify(body)});
+      const res=await request('/ai/assistant',{method:'POST',body:JSON.stringify(body),signal:ctrl.signal} as RequestInit);
       setAsMessages(m=>[...m,{from:'ai',text:res.reply,actions:res.executed||[]}]);
       if((res.executed||[]).length) { await loadCore(); await loadPage(section); }
-    } catch(err:any) { setAsMessages(m=>[...m,{from:'ai',text:`No pude procesarlo: ${err.message||'error del asistente'}`} ]); }
-    finally { setAsBusy(false); }
+    } catch(err:any) { setAsMessages(m=>[...m,{from:'ai',text:err?.name==='AbortError'?'Tardé demasiado en responder (150s). Revisa la conexión con el modelo en Inventario → Análisis IA e inténtalo de nuevo.':`No pude procesarlo: ${err.message||'error del asistente'}`} ]); }
+    finally { clearTimeout(timer); setAsBusy(false); }
   }
 
   const request = useCallback(async (path:string, init:RequestInit={}) => {
@@ -153,7 +155,7 @@ export default function App() {
 
   useEffect(()=>{ if(token && user) loadCore(); },[token,user,loadCore]);
   useEffect(()=>{ if(token && user) loadPage(section); },[token,user,section,loadPage]);
-  useEffect(()=>{ if(token && section==='Asistente' && !asModels.length) request('/inventory/ai/models').then((m:any)=>{ if(Array.isArray(m?.models)) setAsModels(m.models); }).catch(()=>{}); },[token,section,request,asModels.length]);
+  useEffect(()=>{ if(token && user && !asModels.length) request('/inventory/ai/models').then((m:any)=>{ if(Array.isArray(m?.models)) setAsModels(m.models); }).catch(()=>{}); },[token,user,request,asModels.length]);
   const [setupNeeded,setSetupNeeded]=useState<boolean|null>(null);
   const [setupName,setSetupName]=useState('');
   const [setupCompany,setSetupCompany]=useState('');
@@ -384,6 +386,10 @@ export default function App() {
       </div>
     </main>
     {modal&&<div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setModal(null)}}><div className="modal-card"><div className="modal-head"><div><p className="eyebrow">{modal.mode==='updateCompany'?'PREFERENCIAS DEL NEGOCIO':'GESTIÓN DEL SISTEMA'}</p><h2>{modal.mode==='closeCash'?'Cerrar turno de caja':modal.mode==='cashMovement'?'Registrar movimiento de caja':modal.mode==='receivablePayment'?'Registrar abono':modal.mode==='payablePayment'?'Registrar pago al proveedor':modal.mode==='updateCompany'?'Configuración de empresa':modal.mode==='edit'?`Editar · ${modal.page}`:`Nuevo registro · ${modal.page}`}</h2></div><button className="icon-btn" onClick={()=>setModal(null)}><X size={18}/></button></div><form onSubmit={saveForm} className="modal-form"><div className="form-grid">{formFields(modal.page,modal.mode,modal.row).map(field=><label key={field.key} className={field.type==='textarea'?'span-2':''}>{field.label}{field.type==='select'?<select value={form[field.key]??''} required={field.required} onChange={e=>setForm(f=>({...f,[field.key]:e.target.value,...(field.key==='saleId'?{saleItemId:''}:{})}))}><option value="">Seleccionar…</option>{(field.options||[]).map(o=><option value={o.value} key={o.value}>{o.label}</option>)}</select>:field.type==='textarea'?<textarea value={form[field.key]??''} required={field.required} onChange={e=>setForm(f=>({...f,[field.key]:e.target.value}))}/>:<input value={form[field.key]??''} required={field.required} type={field.type||'text'} step={field.step} placeholder={field.placeholder} onChange={e=>setForm(f=>({...f,[field.key]:e.target.value}))}/>}</label>)}</div>{modal.page==='Compras'&&<p className="field-help">Esta entrada crea una orden con una referencia. Después debes usar “Recibir” para que la mercancía entre en inventario.</p>}{modal.page==='Devoluciones'&&<p className="field-help">La devolución solo acepta cantidades aún no devueltas en la venta elegida.</p>}<div className="modal-actions"><button type="button" className="secondary" onClick={()=>setModal(null)}>Cancelar</button><button className="primary" disabled={busy}>{busy?'Guardando…':'Guardar'}</button></div></form></div></div>}
+    {token&&user&&<div className="chat-float">
+      {asOpen&&<div className="chat-float-panel"><div className="chat-float-head"><div><Bot size={18}/><div><b>Asistente POS</b><small>{asExecute?'Ejecuta acciones con tu rol':'Solo propone, no ejecuta'}</small></div></div><div className="chat-float-tools"><label className="check-label" title="Con este interruptor apagado solo propongo acciones sin ejecutarlas"><input type="checkbox" checked={asExecute} onChange={e=>setAsExecute(e.target.checked)}/> Ejecutar</label><button className="icon-btn" onClick={()=>setAsOpen(false)}><X size={16}/></button></div></div><div className="chat-log chat-float-log">{asMessages.map((m,i)=><div key={i} className={`chat-msg ${m.from}`}><div className="chat-avatar">{m.from==='ai'?<Bot size={16}/>:user.name.slice(0,1)}</div><div className="chat-bubble"><p>{m.text}</p>{(m.actions||[]).map((a:any,j:number)=><span key={j} className={`pill ${a.ok?'green':''}`}>{a.tool}: {a.ok?'ok':'falló'}</span>)}</div></div>)}{asBusy&&<div className="chat-msg ai"><div className="chat-avatar"><Bot size={16}/></div><div className="chat-bubble"><p>Procesando…</p></div></div>}</div><form className="chat-input" onSubmit={sendAssistant}><input value={asInput} onChange={e=>setAsInput(e.target.value)} placeholder="Pregunta o pide un cambio…" maxLength={1000}/><button className="primary" disabled={asBusy||!asInput.trim()}><Send size={15}/></button></form></div>}
+      <button className="chat-float-btn" onClick={()=>setAsOpen(o=>!o)} title="Asistente IA">{asOpen?<X size={22}/>:<Bot size={22}/>}</button>
+    </div>}
   </div>;
 }
 
