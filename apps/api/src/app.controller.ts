@@ -10,6 +10,7 @@ import { AppService } from './app.service';
 import { PrismaService } from './prisma.service';
 import { InventoryFilesService } from './inventory-files.service';
 import { OpenCodeInventoryService } from './opencode-inventory.service';
+import { PosAssistantService } from './pos-assistant.service';
 
 export const uploadDir =
   process.env.UPLOADS_DIR ||
@@ -35,6 +36,7 @@ export class AppController {
     private readonly prisma: PrismaService,
     private readonly inventoryFiles: InventoryFilesService,
     private readonly inventoryAi: OpenCodeInventoryService,
+    private readonly assistant: PosAssistantService,
   ) {}
 
   private async context(auth?: string) {
@@ -202,4 +204,11 @@ export class AppController {
   @ApiBearerAuth() @Get('reports') async reports(@Headers('authorization') auth: string, @Query() query: any) { const c = await this.context(auth); this.roles(c, ['ADMIN','MANAGER','ACCOUNTANT']); return this.service.reports(c.companyId, query); }
   @ApiBearerAuth() @Get('audit-logs') async auditLogs(@Headers('authorization') auth: string, @Query() query: any) { const c = await this.context(auth); this.roles(c, ['ADMIN','MANAGER']); return this.service.auditLogs(c.companyId, query); }
   @ApiBearerAuth() @Get('electronic-invoice/status') async eInvoiceStatus(@Headers('authorization') auth: string) { const c = await this.context(auth); this.roles(c, ['ADMIN','MANAGER','ACCOUNTANT']); return this.service.electronicInvoiceStatus(c.companyId); }
+
+  @ApiBearerAuth() @Throttle({ default: { limit: 20, ttl: 60000 } })
+  @Post('ai/assistant') async assistantChat(@Headers('authorization') auth: string, @Body() body: any) {
+    const c = await this.context(auth);
+    if (!body?.message || String(body.message).trim().length < 2) throw new BadRequestException('Escribe un mensaje.');
+    return this.assistant.chat(c.companyId, c.sub, c.role, String(body.message), { execute: body?.execute === true, model: body?.model ? String(body.model) : undefined });
+  }
 }

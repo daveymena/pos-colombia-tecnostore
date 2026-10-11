@@ -3,7 +3,7 @@ import {
   LayoutDashboard, ShoppingCart, Package, Users, Boxes, FileText, LogOut, Search, Plus,
   RefreshCw, CircleDollarSign, TrendingUp, AlertTriangle, Menu, X, Truck, Wallet,
   ClipboardList, RotateCcw, Receipt, ChartNoAxesCombined, Settings, ShieldCheck, ArrowLeftRight,
-  Building2, UserCog, Tags, Landmark, BadgeDollarSign, History, CheckCircle2, Printer, Download, Upload, FileDown, Sparkles,
+  Building2, UserCog, Tags, Landmark, BadgeDollarSign, History, CheckCircle2, Printer, Download, Upload, FileDown, Sparkles, Bot,
 } from 'lucide-react';
 
 const API = (import.meta as any).env.VITE_API_URL || 'http://localhost:3000/api';
@@ -24,6 +24,7 @@ const roleNames:Record<string,string> = {ADMIN:'Administrador',MANAGER:'Gerente'
 const sections = [
   {name:'Dashboard', label:'Dashboard', icon:LayoutDashboard, group:'GENERAL'},
   {name:'Punto de venta', label:'Punto de venta', icon:ShoppingCart, group:'OPERACIÓN'},
+  {name:'Asistente', label:'Asistente IA', icon:Bot, group:'OPERACIÓN'},
   {name:'Ventas', label:'Ventas', icon:CircleDollarSign, group:'OPERACIÓN'},
   {name:'Caja', label:'Caja y turnos', icon:Wallet, group:'OPERACIÓN'},
   {name:'Productos', label:'Productos', icon:Package, group:'INVENTARIO'},
@@ -76,6 +77,25 @@ export default function App() {
   const [paymentLines,setPaymentLines] = useState<{method:string;amount:string}[]>([{method:'CASH',amount:''}]);
   const [modal,setModal] = useState<{mode:string;page:string;row?:AnyRow}|null>(null);
   const [form,setForm] = useState<Record<string,any>>({});
+  const [asMessages,setAsMessages]=useState<{from:'user'|'ai';text:string;actions?:any[]}[]>([{from:'ai',text:'Hola, soy el asistente del POS. Puedo buscar y crear productos, fijar precios y promociones, ajustar inventario y resumir ventas o stock bajo. Escribe lo que necesitas en lenguaje normal.'}]);
+  const [asInput,setAsInput]=useState('');
+  const [asExecute,setAsExecute]=useState(false);
+  const [asModel,setAsModel]=useState('');
+  const [asModels,setAsModels]=useState<string[]>([]);
+  const [asBusy,setAsBusy]=useState(false);
+
+  async function sendAssistant(e?:React.FormEvent) {
+    if(e) e.preventDefault();
+    const text=asInput.trim(); if(!text||asBusy) return;
+    setAsMessages(m=>[...m,{from:'user',text}]); setAsInput(''); setAsBusy(true); setError('');
+    try {
+      const body:any={message:text,execute:asExecute}; if(asModel) body.model=asModel;
+      const res=await request('/ai/assistant',{method:'POST',body:JSON.stringify(body)});
+      setAsMessages(m=>[...m,{from:'ai',text:res.reply,actions:res.executed||[]}]);
+      if((res.executed||[]).length) { await loadCore(); await loadPage(section); }
+    } catch(err:any) { setAsMessages(m=>[...m,{from:'ai',text:`No pude procesarlo: ${err.message||'error del asistente'}`} ]); }
+    finally { setAsBusy(false); }
+  }
 
   const request = useCallback(async (path:string, init:RequestInit={}) => {
     const res = await fetch(`${API}${path}`,{...init,headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{ }),...(init.headers||{})}});
@@ -133,6 +153,7 @@ export default function App() {
 
   useEffect(()=>{ if(token && user) loadCore(); },[token,user,loadCore]);
   useEffect(()=>{ if(token && user) loadPage(section); },[token,user,section,loadPage]);
+  useEffect(()=>{ if(token && section==='Asistente' && !asModels.length) request('/inventory/ai/models').then((m:any)=>{ if(Array.isArray(m?.models)) setAsModels(m.models); }).catch(()=>{}); },[token,section,request,asModels.length]);
   const [setupNeeded,setSetupNeeded]=useState<boolean|null>(null);
   const [setupName,setSetupName]=useState('');
   const [setupCompany,setSetupCompany]=useState('');
@@ -343,7 +364,11 @@ export default function App() {
           <div className="pos-layout"><section className="panel"><div className="searchbox"><Search size={18}/><input value={cartSearch} onChange={e=>setCartSearch(e.target.value)} placeholder="Buscar por nombre, SKU o código de barras…"/><span className="small muted">{filteredProducts.length} productos</span></div><div className="product-grid">{filteredProducts.map(p=><button className="product-card" key={p.id} onClick={()=>addToCart(p)}>{imgSrc(p)?<img src={imgSrc(p)} alt={p.name} className="product-img"/>:<div className="product-illustration"><Package size={27}/></div>}<b>{p.name}</b><small>{p.sku}</small><strong>{money(p.promoPrice && Number(p.promoPrice)>0 && Number(p.promoPrice)<Number(p.price)?p.promoPrice:p.price)}</strong><span className="add-chip"><Plus size={14}/> Agregar</span></button>)}</div>{!filteredProducts.length&&<Empty text="No hay productos para mostrar."/>}</section>
             <section className="panel cart-panel"><div className="panel-head"><div><h3>Venta actual</h3><p className="muted small">{cart.reduce((s,l)=>s+l.quantity,0)} unidad(es)</p></div><button className="text-btn" onClick={()=>setCart([])}>Vaciar</button></div>{cart.map(l=><div className="cart-line" key={l.product.id}><div className="grow"><b>{l.product.name}</b><small>{money(l.product.promoPrice&&Number(l.product.promoPrice)>0&&Number(l.product.promoPrice)<Number(l.product.price)?l.product.promoPrice:l.product.price)} c/u</small><div className="qty"><button onClick={()=>setCart(c=>c.map(x=>x.product.id===l.product.id?{...x,quantity:Math.max(.001,Math.round((x.quantity-1)*1000)/1000)}:x))}>−</button><span>{l.quantity}</span><button onClick={()=>setCart(c=>c.map(x=>x.product.id===l.product.id?{...x,quantity:x.quantity+1}:x))}>+</button></div></div><strong>{money(Number(l.product.promoPrice && Number(l.product.promoPrice)>0 && Number(l.product.promoPrice)<Number(l.product.price)?l.product.promoPrice:l.product.price)*l.quantity*(1+Number(l.product.taxRate||0)/100))}</strong><button className="remove" onClick={()=>setCart(c=>c.filter(x=>x.product.id!==l.product.id))}>×</button></div>)}{!cart.length&&<Empty text="Agrega productos para comenzar una venta."/>}
               <div className="cart-total"><span>Total estimado con impuestos</span><strong>{money(cartTotal)}</strong></div><div className="payment-heading"><b>Medios de pago</b><button className="text-btn" onClick={()=>setPaymentLines(v=>[...v,{method:'TRANSFER',amount:''}])} disabled={paymentLines.length>=4}><Plus size={13}/> Añadir medio</button></div>{paymentLines.map((p,i)=><div className="payment-line" key={i}><select value={p.method} onChange={e=>setPaymentLines(old=>old.map((r,j)=>i===j?{...r,method:e.target.value}:r))}><option value="CASH">Efectivo</option><option value="CARD">Tarjeta</option><option value="TRANSFER">Transferencia</option><option value="QR">QR</option><option value="CREDIT">Crédito</option><option value="OTHER">Otro</option></select>{paymentLines.length>1?<input type="number" min="0.01" step="0.01" placeholder="Importe" value={p.amount} onChange={e=>setPaymentLines(old=>old.map((r,j)=>i===j?{...r,amount:e.target.value}:r))}/>:<div className="fixed-amount">{money(cartTotal)}</div>}{paymentLines.length>1&&<button className="remove" onClick={()=>setPaymentLines(old=>old.filter((_,j)=>j!==i))}>×</button>}</div>)}<button className="primary full checkout-btn" disabled={!cart.length||busy} onClick={checkout}>{busy?'Procesando…':'Confirmar venta · '+money(cartTotal)}</button><p className="small muted">El servidor vuelve a validar precios, pagos y existencias.</p></section></div></div>}
-        {section!=='Dashboard'&&section!=='Punto de venta'&&<ModuleView page={section} data={data[section]} rows={pageRows} search={search} setSearch={setSearch} openCreate={openCreate} openAction={openAction} columns={columns} nested={nested} money={money} shortDate={shortDate} busy={busy} receivePurchase={receivePurchase} cancelPurchase={cancelPurchase} dataAll={data} request={request} uploadFile={uploadFile} downloadFile={downloadFile} loadPage={loadPage} onSettings={()=>openCreate('Configuración')}/>}
+        {section==='Asistente'&&<div><div className="page-heading"><div><p className="eyebrow">AYUDA OPERATIVA</p><h1>Asistente IA</h1><p className="muted">Crea productos, fija precios y promociones, ajusta inventario y consulta ventas o stock con lenguaje normal.</p></div><div className="heading-actions"><select value={asModel} onChange={e=>setAsModel(e.target.value)} title="Modelo gratuito"><option value="">Modelo: auto</option>{asModels.map(m=><option key={m} value={m}>{m}</option>)}</select><label className="check-label" title="Con este interruptor apagado solo propongo acciones sin ejecutarlas"><input type="checkbox" checked={asExecute} onChange={e=>setAsExecute(e.target.checked)}/> Ejecutar acciones</label></div></div>
+          <section className="panel assistant-panel"><div className="chat-log">{asMessages.map((m,i)=><div key={i} className={`chat-msg ${m.from}`}><div className="chat-avatar">{m.from==='ai'?<Bot size={16}/>:user.name.slice(0,1)}</div><div className="chat-bubble"><p>{m.text}</p>{(m.actions||[]).map((a:any,j:number)=><span key={j} className={`pill ${a.ok?'green':''}`}>{a.tool}: {a.ok?'ok':'falló'}</span>)}</div></div>)}{asBusy&&<div className="chat-msg ai"><div className="chat-avatar"><Bot size={16}/></div><div className="chat-bubble"><p>Procesando…</p></div></div>}</div>
+          <form className="chat-input" onSubmit={sendAssistant}><input value={asInput} onChange={e=>setAsInput(e.target.value)} placeholder='Ej: crea el producto "Cable USB-C 2m" a $25000 con costo $14000' maxLength={1000}/><button className="primary" disabled={asBusy||!asInput.trim()}>{asBusy?'…':'Enviar'}</button></form>
+          <p className="field-help">Sin “Ejecutar acciones” solo propongo el plan. Con el interruptor activado ejecuto con tu usuario y rol; todo queda auditado. Nunca vendo, cobro ni toco usuarios o facturación.</p></section></div>}
+        {section!=='Dashboard'&&section!=='Punto de venta'&&section!=='Asistente'&&<ModuleView page={section} data={data[section]} rows={pageRows} search={search} setSearch={setSearch} openCreate={openCreate} openAction={openAction} columns={columns} nested={nested} money={money} shortDate={shortDate} busy={busy} receivePurchase={receivePurchase} cancelPurchase={cancelPurchase} dataAll={data} request={request} uploadFile={uploadFile} downloadFile={downloadFile} loadPage={loadPage} onSettings={()=>openCreate('Configuración')}/>}
         <footer className="footer"><span>POS Colombia · Moneda COP · Zona horaria America/Bogota</span><span>{busy?'Procesando operación…':'Datos sincronizados bajo demanda'} · Versión de desarrollo</span></footer>
       </div>
     </main>

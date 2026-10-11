@@ -145,6 +145,10 @@ export class OpenCodeInventoryService {
     });
   }
 
+  async assistText(system: string, prompt: string, model?: string, maxTokens = 800) {
+    return this.complete(system, prompt, model, maxTokens);
+  }
+
   async assistJson(system: string, prompt: string, model?: string, maxTokens = 600) {
     const { text } = await this.complete(system, prompt, model, maxTokens);
     const start = text.indexOf('{');

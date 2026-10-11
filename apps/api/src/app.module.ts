@@ -8,6 +8,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { InventoryFilesService } from './inventory-files.service';
 import { OpenCodeInventoryService } from './opencode-inventory.service';
+import { PosAssistantService } from './pos-assistant.service';
 
 const jwtSecret = process.env.JWT_SECRET;
 if (!jwtSecret || jwtSecret.length < 32) {
@@ -20,6 +21,6 @@ if (!jwtSecret || jwtSecret.length < 32) {
     JwtModule.register({ global: true, secret: jwtSecret, signOptions: { expiresIn: '8h' } }),
   ],
   controllers: [AppController],
-  providers: [PrismaService, AppService, InventoryFilesService, OpenCodeInventoryService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [PrismaService, AppService, InventoryFilesService, OpenCodeInventoryService, PosAssistantService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}
