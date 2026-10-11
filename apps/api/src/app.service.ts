@@ -23,6 +23,30 @@ export class AppService {
     await this.prisma.auditLog.create({ data: { companyId, userId, action, entity, entityId, metadata: metadata ?? Prisma.JsonNull } }).catch(() => undefined);
   }
 
+  async setupStatus() {
+    return { needed: (await this.prisma.user.count()) === 0 };
+  }
+
+  async setupAdmin(body: any) {
+    if ((await this.prisma.user.count()) > 0) throw new ForbiddenException('El registro inicial ya fue completado.');
+    const name = String(body?.name || '').trim();
+    const email = String(body?.email || '').toLowerCase().trim();
+    const password = String(body?.password || '');
+    const companyName = String(body?.company || '').trim() || 'Mi negocio';
+    if (!name || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new BadRequestException('Nombre y correo válido son obligatorios.');
+    if (password.length < 10) throw new BadRequestException('La contraseña debe tener al menos 10 caracteres.');
+    return this.prisma.$transaction(async (tx) => {
+      const company = await tx.company.create({ data: { name: companyName, currency: 'COP', timezone: 'America/Bogota' } });
+      const branch = await tx.branch.create({ data: { companyId: company.id, name: 'Principal' } });
+      await tx.warehouse.create({ data: { branchId: branch.id, name: 'Bodega principal' } });
+      await tx.register.create({ data: { branchId: branch.id, name: 'Caja 1' } });
+      const user = await tx.user.create({ data: { companyId: company.id, name, email, passwordHash: await bcrypt.hash(password, 12), role: 'ADMIN' } });
+      await tx.auditLog.create({ data: { companyId: company.id, userId: user.id, action: 'SETUP', entity: 'User', entityId: user.id } });
+      const accessToken = await this.jwt.signAsync({ sub: user.id, companyId: user.companyId, role: user.role, email: user.email });
+      return { accessToken, user: { id: user.id, name: user.name, email: user.email, role: user.role, companyId: user.companyId } };
+    });
+  }
+
   async login(email: string, password: string) {
     if (!email || !password) throw new BadRequestException('Correo y contraseÃƒÂ±a son obligatorios');
     const user = await this.prisma.user.findUnique({ where: { email: String(email).toLowerCase().trim() } });

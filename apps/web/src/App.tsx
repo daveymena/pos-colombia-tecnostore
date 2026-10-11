@@ -133,6 +133,10 @@ export default function App() {
 
   useEffect(()=>{ if(token && user) loadCore(); },[token,user,loadCore]);
   useEffect(()=>{ if(token && user) loadPage(section); },[token,user,section,loadPage]);
+  const [setupNeeded,setSetupNeeded]=useState<boolean|null>(null);
+  const [setupName,setSetupName]=useState('');
+  const [setupCompany,setSetupCompany]=useState('');
+  useEffect(()=>{ if(!token) fetch(`${API}/auth/setup-needed`).then(r=>r.json()).then(d=>setSetupNeeded(!!d?.needed)).catch(()=>setSetupNeeded(false)); },[token]);
 
   async function login(e:React.FormEvent) {
     e.preventDefault(); setBusy(true); setError('');
@@ -141,6 +145,15 @@ export default function App() {
       localStorage.setItem('pos_token',res.accessToken); localStorage.setItem('pos_user',JSON.stringify(res.user));
       setToken(res.accessToken); setUser(res.user); setSection('Dashboard');
     } catch(e:any) { setError(e.message || 'No fue posible iniciar sesión'); }
+    finally { setBusy(false); }
+  }
+  async function setup(e:React.FormEvent) {
+    e.preventDefault(); setBusy(true); setError('');
+    try {
+      const res = await request('/auth/setup',{method:'POST',body:JSON.stringify({name:setupName,email,password,company:setupCompany})});
+      localStorage.setItem('pos_token',res.accessToken); localStorage.setItem('pos_user',JSON.stringify(res.user));
+      setToken(res.accessToken); setUser(res.user); setSetupNeeded(false); setSection('Dashboard');
+    } catch(e:any) { setError(e.message || 'No fue posible crear la cuenta inicial'); }
     finally { setBusy(false); }
   }
   function logout() { localStorage.removeItem('pos_token');localStorage.removeItem('pos_user');setToken('');setUser(null);setData({});setCart([]); }
@@ -308,7 +321,9 @@ export default function App() {
   };
   const nested = (obj:any,path:string) => path.split('.').reduce((v,k)=>v?.[k],obj);
 
-  if(!token || !user) return <div className="login-wrap"><div className="login-card"><div className="brand-mark">P</div><p className="eyebrow">SISTEMA DE GESTIÓN COMERCIAL</p><h1>POS Colombia</h1><p className="muted">Ventas, inventario, caja y administración en un solo lugar.</p><form onSubmit={login} className="stack"><label>Correo electrónico<input value={email} onChange={e=>setEmail(e.target.value)} type="email" required autoComplete="username"/></label><label>Contraseña<input value={password} onChange={e=>setPassword(e.target.value)} type="password" required autoComplete="current-password"/></label>{error&&<div className="error">{error}</div>}<button className="primary full" disabled={busy}>{busy?'Ingresando…':'Iniciar sesión'}</button></form><p className="small muted">{(import.meta as any).env.DEV ? 'Demo local: admin@demo-pos.local · Cambiar123!' : 'Acceso restringido a personal autorizado.'}</p></div></div>;
+  if(!token || !user) return <div className="login-wrap"><div className="login-card"><div className="brand-mark">P</div><p className="eyebrow">SISTEMA DE GESTIÓN COMERCIAL</p><h1>POS Colombia</h1><p className="muted">Ventas, inventario, caja y administración en un solo lugar.</p>{setupNeeded
+    ? <form onSubmit={setup} className="stack"><p className="small"><b>Configuración inicial:</b> crea la empresa y tu cuenta de administrador. Este formulario solo aparece cuando no existe ningún usuario.</p><label>Tu nombre<input value={setupName} onChange={e=>setSetupName(e.target.value)} required autoComplete="name"/></label><label>Nombre del negocio<input value={setupCompany} onChange={e=>setSetupCompany(e.target.value)} placeholder="Mi negocio"/></label><label>Correo electrónico<input value={email} onChange={e=>setEmail(e.target.value)} type="email" required autoComplete="username"/></label><label>Contraseña (mínimo 10 caracteres)<input value={password} onChange={e=>setPassword(e.target.value)} type="password" required minLength={10} autoComplete="new-password"/></label>{error&&<div className="error">{error}</div>}<button className="primary full" disabled={busy}>{busy?'Creando…':'Crear empresa y cuenta'}</button></form>
+    : <form onSubmit={login} className="stack"><label>Correo electrónico<input value={email} onChange={e=>setEmail(e.target.value)} type="email" required autoComplete="username"/></label><label>Contraseña<input value={password} onChange={e=>setPassword(e.target.value)} type="password" required autoComplete="current-password"/></label>{error&&<div className="error">{error}</div>}<button className="primary full" disabled={busy}>{busy?'Ingresando…':'Iniciar sesión'}</button></form>}<p className="small muted">{(import.meta as any).env.DEV ? 'Demo local: admin@demo-pos.local · Cambiar123!' : 'Acceso restringido a personal autorizado.'}</p></div></div>;
 
   const pageRows = Array.isArray(data[section]) ? displayedRows : [];
   return <div className="app-shell">

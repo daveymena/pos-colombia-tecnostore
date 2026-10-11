@@ -54,6 +54,9 @@ export class AppController {
   }
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   @Post('auth/login') login(@Body() body: { email: string; password: string }) { return this.service.login(body.email, body.password); }
+  @Get('auth/setup-needed') setupNeeded() { return this.service.setupStatus(); }
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Post('auth/setup') setup(@Body() body: { name: string; email: string; password: string; company?: string }) { return this.service.setupAdmin(body); }
   @ApiBearerAuth() @Get('auth/me') async me(@Headers('authorization') auth: string) { const c = await this.context(auth); return this.service.me(c.sub); }
 
   @ApiBearerAuth() @Get('dashboard') async dashboard(@Headers('authorization') auth: string, @Query() query: any) { const c = await this.context(auth); return this.service.dashboard(c.companyId, query); }
