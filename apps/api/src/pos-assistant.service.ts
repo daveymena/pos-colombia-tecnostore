@@ -82,11 +82,19 @@ export class PosAssistantService {
           if (!WRITE_ROLES.includes(role)) throw new ForbiddenException('Tu rol no puede modificar productos ni inventario.');
           if (action.tool === 'createProduct') {
             if (!String(args.name || '').trim()) throw new BadRequestException('Falta el nombre del producto.');
+            let categoryId: string | undefined;
+            if (args.category || args.categoryId) {
+              const wanted = String(args.categoryId || args.category);
+              const cats = (await this.app.categories(companyId)) as any[];
+              const match = cats.find((c) => c.id === wanted || c.name.toLowerCase() === wanted.toLowerCase());
+              if (!match) throw new BadRequestException(`La categoría "${wanted}" no existe; créala primero o usa una existente.`);
+              categoryId = match.id;
+            }
             const created: any = await this.app.createProduct(companyId, userId, {
               name: String(args.name).trim(),
-              sku: args.sku ? String(args.sku).trim().toUpperCase().slice(0, 30) : undefined,
+              sku: (args.sku ? String(args.sku).trim().toUpperCase().slice(0, 30) : String(args.name).normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 20)) || undefined,
               price: args.price ?? 0, cost: args.cost ?? 0, taxRate: args.taxRate ?? 0,
-              stockMin: args.stockMin ?? 0, barcode: args.barcode, categoryId: args.category,
+              stockMin: args.stockMin ?? 0, barcode: args.barcode, categoryId,
             });
             return { ok: true, tool: action.tool, summary: `Creado ${created.sku} · ${created.name} · precio $${Number(created.price)}` };
           }
