@@ -30,14 +30,14 @@
     "mammoth": "^1.13.0",
     "prisma": "^6.12.0",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "tsx": "^4.19.2"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.4.9",
     "@types/helmet": "^0.0.48",
     "@types/multer": "^2.3.0",
     "@types/node": "^22.10.5",
-    "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   },
   "prisma": {

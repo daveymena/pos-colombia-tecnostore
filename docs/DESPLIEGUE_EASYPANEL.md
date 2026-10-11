@@ -27,42 +27,34 @@ Si el formulario usa Git URL en vez de la integración, usa `https://github.com/
 
 ## 2. API (App desde GitHub)
 
-1. **Apps → + App → From GitHub**, rama `main`, Build Path: `apps/api` (Dockerfile).
-2. Dominio: `https://api.tudominio.com` con HTTPS activado.
+1. En la app `tiendapost`, conecta GitHub `daveymena/pos-colombia-tecnostore`, rama `main`, contexto raíz del repositorio. El Dockerfile raíz empaqueta API + web en un solo servicio.
+2. Conserva el dominio HTTPS que EasyPanel asignó a la app (por ejemplo `https://tecnoia-tuendapost.h9owya.easypanel.host`). El sitio y API comparten origen: la API usa `/api`.
 3. Variables de entorno:
    - `DATABASE_URL` = la del paso 1 (usa el hostname interno `pos-db`).
    - `JWT_SECRET` = clave de 32+ caracteres.
-   - `CORS_ORIGIN` = `https://pos.tudominio.com`
+   - `CORS_ORIGIN` = el dominio HTTPS de `tiendapost`
    - `UPLOADS_DIR` = `/app/uploads`
    - `NODE_ENV` = `production`
    - `OPENCODE_API_URL` = `https://opencode.ai/zen/v1` (o URL interna del puente OpenAI-compatible)
    - `OPENCODE_API_KEY` = clave de OpenCode Zen guardada como secreto en EasyPanel; vacío deshabilita IA
    - `OPENCODE_MODEL` = `deepseek-v4-flash-free` u otro ID gratuito habilitado en la cuenta
    - `ENABLE_SWAGGER` = `false` (predeterminado; solo actívalo temporalmente si necesitas la documentación)
-4. **Mounts → + Volume**: nombre `pos_uploads`, ruta `/app/uploads` (las fotos de productos sobreviven a cada despliegue).
-5. Deploy. La propia imagen ejecuta `prisma migrate deploy` al arrancar y expone `GET /api/health`.
+4. **Storage → Add Volume**: nombre `pos-uploads`, ruta `/app/uploads` (las imágenes sobreviven a redeploys).
+5. Deploy. La imagen raíz ejecuta `prisma migrate deploy` al arrancar y publica la web en `/` y API en `/api`. Health: `GET /api/health`.
 
 ## 3. Carga inicial: empresa + catálogo TecnoStore (una sola vez)
 
-Desde tu PC con acceso a la BD de producción (túnel SSH o variable temporal):
+Después del primer despliegue, abre la **Console** de `tiendapost`. Define temporalmente `ADMIN_EMAIL`, `ADMIN_PASSWORD` y `STORE_NAME` como variables del servicio (contraseña de 10+ caracteres). Si tienes el NIT legal, añade `STORE_NIT`; si todavía no lo configuras, se guarda vacío, no un NIT ficticio. Mantén `SEED_DEMO_CATALOG` en `false` para no cargar stock ni productos inventados.
+
+Ejecuta una sola vez en la Console:
 
 ```sh
-set DATABASE_URL=postgresql://pos:TU_CLAVE@TU_SERVIDOR:5432/posdb?schema=public
-set ADMIN_EMAIL=admin@tutienda.com
-set ADMIN_PASSWORD=UnaClaveLargaYSegura123!
-set STORE_NAME=TecnoStore Bogotá
-set STORE_NIT=901123456-7
-npm run db:seed:techstore -w apps/api
+npm run db:seed:techstore
 ```
 
-Crea 11 categorías, 22 productos con IVA 19%, stock inicial, sucursal, bodega, caja y el usuario administrador. **Guarda la contraseña en un gestor; no la dejes en el historial.**
+Crea la empresa, administrador, sucursal, almacén, caja, consumidor final y 11 categorías de tecnología. El catálogo y stock de ejemplo solo se cargan si `SEED_DEMO_CATALOG=true`; para producción, importa el catálogo real y haz un conteo físico. Una vez sembrado, elimina `ADMIN_PASSWORD` de las variables EasyPanel; la contraseña queda almacenada solo como hash.
 
-## 4. Web (App desde GitHub)
-
-1. **Apps → + App → From GitHub**, Build Path: `apps/web` (Dockerfile).
-2. Dominio: `https://pos.tudominio.com` con HTTPS.
-3. Build Arg: `VITE_API_URL=https://api.tudominio.com/api` (se fija al compilar; si cambias el dominio de la API, reconstruye).
-4. Deploy y abre el dominio: el login ya NO trae credenciales de prueba (solo aparecen en desarrollo local).
+La web ya viene en la imagen de `tiendapost`; no hace falta crear una segunda app para `apps/web`.
 
 ## Importación y exportación de inventario
 

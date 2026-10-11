@@ -54,16 +54,16 @@ async function main() {
     create: {
       id: '00000000-0000-4000-8000-000000000001',
       name: process.env.STORE_NAME || 'TecnoStore Colombia',
-      taxId: process.env.STORE_NIT || '900000000-1',
+      taxId: process.env.STORE_NIT || null,
       email: process.env.STORE_EMAIL || adminEmail,
-      phone: process.env.STORE_PHONE || '',
-      address: process.env.STORE_ADDRESS || 'Colombia',
+      phone: process.env.STORE_PHONE || undefined,
+      address: process.env.STORE_ADDRESS || undefined,
       currency: 'COP', timezone: 'America/Bogota',
     },
   });
   const branch = await prisma.branch.upsert({
     where: { companyId_name: { companyId: company.id, name: process.env.STORE_BRANCH || 'Principal' } }, update: {},
-    create: { companyId: company.id, name: process.env.STORE_BRANCH || 'Principal', address: process.env.STORE_ADDRESS || 'Colombia' },
+    create: { companyId: company.id, name: process.env.STORE_BRANCH || 'Principal', address: process.env.STORE_ADDRESS || undefined },
   });
   const warehouse = await prisma.warehouse.upsert({
     where: { branchId_name: { branchId: branch.id, name: 'Bodega principal' } }, update: {},
@@ -86,34 +86,32 @@ async function main() {
     catIds[name] = cat.id;
   }
   let n = 0;
-  for (const [i, p] of PRODUCTS.entries()) {
-    const b = base(p.shelf);
-    const product = await prisma.product.upsert({
-      where: { companyId_sku: { companyId: company.id, sku: p.sku } }, update: {},
-      create: {
-        companyId: company.id, categoryId: catIds[p.cat] ?? null, name: p.name, sku: p.sku,
-        barcode: p.barcode || `77000${String(100000 + i)}`, kind: p.service ? 'SERVICE' : 'STOCK',
-        price: b, cost: costOf(b), taxRate: 19, stockMin: p.min,
-      },
-    });
-    if (!p.service && p.stock > 0) {
-      await prisma.inventoryBalance.upsert({
-        where: { productId_warehouseId: { productId: product.id, warehouseId: warehouse.id } },
-        update: {}, create: { productId: product.id, warehouseId: warehouse.id, quantity: p.stock },
+  if (process.env.SEED_DEMO_CATALOG === 'true') {
+    for (const [i, p] of PRODUCTS.entries()) {
+      const b = base(p.shelf);
+      const product = await prisma.product.upsert({
+        where: { companyId_sku: { companyId: company.id, sku: p.sku } }, update: {},
+        create: {
+          companyId: company.id, categoryId: catIds[p.cat] ?? null, name: p.name, sku: p.sku,
+          barcode: p.barcode || `77000${String(100000 + i)}`, kind: p.service ? 'SERVICE' : 'STOCK',
+          price: b, cost: costOf(b), taxRate: 19, stockMin: p.min,
+        },
       });
-      const move = await prisma.stockMovement.findFirst({ where: { productId: product.id, warehouseId: warehouse.id, reference: 'SALDO-INICIAL' } });
-      if (!move) await prisma.stockMovement.create({ data: { productId: product.id, warehouseId: warehouse.id, type: 'OPENING', quantity: p.stock, unitCost: costOf(b), reference: 'SALDO-INICIAL', note: 'Inventario inicial' } });
+      if (!p.service && p.stock > 0) {
+        await prisma.inventoryBalance.upsert({
+          where: { productId_warehouseId: { productId: product.id, warehouseId: warehouse.id } },
+          update: {}, create: { productId: product.id, warehouseId: warehouse.id, quantity: p.stock },
+        });
+        const move = await prisma.stockMovement.findFirst({ where: { productId: product.id, warehouseId: warehouse.id, reference: 'SALDO-INICIAL' } });
+        if (!move) await prisma.stockMovement.create({ data: { productId: product.id, warehouseId: warehouse.id, type: 'OPENING', quantity: p.stock, unitCost: costOf(b), reference: 'SALDO-INICIAL', note: 'Inventario inicial demo' } });
+      }
+      n++;
     }
-    n++;
   }
-  await prisma.supplier.upsert({
-    where: { id: '00000000-0000-4000-8000-000000000020' }, update: {},
-    create: { id: '00000000-0000-4000-8000-000000000020', companyId: company.id, name: 'Distribuidor Mayorista S.A.S', taxId: '900000001-2' },
-  });
   await prisma.customer.upsert({
     where: { id: '00000000-0000-4000-8000-000000000010' }, update: {},
     create: { id: '00000000-0000-4000-8000-000000000010', companyId: company.id, name: 'Consumidor final', document: '2222222222' },
   });
-  console.log(`Seed TecnoStore OK: ${n} productos, empresa "${company.name}", admin ${adminEmail}`);
+  console.log(`Seed TecnoStore OK: estructura y ${CATEGORIES.length} categorías, ${n} productos demo, empresa "${company.name}", admin ${adminEmail}`);
 }
 main().finally(() => prisma.$disconnect());
