@@ -1,8 +1,10 @@
 import { BadRequestException, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { PrismaService } from './prisma.service';
 
-// Modelos gratuitos verificados en OpenCode Zen (sufijo -free, 2026-10-11).
-// DeepSeek libre ya no existe: no usar deepseek-v4-flash-free.
+// Modelos gratuitos verificados en OpenCode Zen (sufijo -free, 2026-10-11,
+// 12 en /models hoy). Rotan igual que en el bot.
+// Ojo: nemotron-3-ultra-free responde 403 fuera del runtime de OpenCode;
+// por eso existe el respaldo Ollama abajo.
 const FREE_MODELS = [
   'mimo-v2.6-flash-free',
   'nemotron-3.5-lightning-free',
@@ -18,11 +20,31 @@ const FREE_MODELS = [
   'jev-1.13-free',
 ];
 
+// Modelos instalados en el Ollama interno (verificado: /api/tags responde
+// qwen3:1.7b, llama3.2:3b y deepseek-r1:8b). Sirven sin clave externa.
+const OLLAMA_MODELS = ['qwen3:1.7b', 'llama3.2:3b', 'deepseek-r1:8b'];
+
+// IDs retirados que se redirigen al sucesor vigente.
+const LEGACY_MODEL_ALIAS: Record<string, string> = {
+  'deepseek-v4-flash-free': 'mimo-v2.6-flash-free',
+};
+
 function normalizeZenModelId(baseUrl: string, model: string) {
-  const id = model.trim();
+  const id = (LEGACY_MODEL_ALIAS[model.trim()] || model.trim());
   if (baseUrl.includes('opencode.ai/zen')) return id.startsWith('opencode/') ? id.slice('opencode/'.length) : id;
   return id;
 }
+
+// Normaliza la base de Ollama a su endpoint OpenAI-compatible (.../v1).
+function normalizeOllamaBase(raw: string) {
+  const noSlash = (raw || '').trim().replace(/\/+$/, '');
+  if (!noSlash) return '';
+  return /\/v1$/.test(noSlash) ? noSlash : `${noSlash}/v1`;
+}
+
+type ChatProvider =
+  | { kind: 'zen'; baseUrl: string; apiKey: string; models: string[] }
+  | { kind: 'ollama'; baseUrl: string; apiKey: string; models: string[] };
 
 @Injectable()
 export class OpenCodeInventoryService {
@@ -32,80 +54,139 @@ export class OpenCodeInventoryService {
     process.env.OPENCODE_MODEL || 'mimo-v2.6-flash-free',
   );
   private readonly apiKey = process.env.OPENCODE_API_KEY || '';
+  // Proveedor local de respaldo: Ollama interno (gratis, sin clave externa).
+  // Por defecto apunta al servicio `ollama` de EasyPanel; con OLLAMA_URL
+  // vacía (variable definida pero sin valor) se desactiva el respaldo.
+  private readonly ollamaBase = process.env.OLLAMA_URL === ''
+    ? ''
+    : normalizeOllamaBase(process.env.OLLAMA_URL || 'http://ollama_ollama:11434/v1');
+  private readonly ollamaModel = (process.env.OLLAMA_MODEL || 'qwen3:1.7b').trim();
   private modelsCache: { at: number; ids: string[] } | null = null;
 
   constructor(private readonly prisma: PrismaService) {}
 
-  private chain(requested?: string) {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const raw of [requested, this.defaultModel, ...FREE_MODELS]) {
-      if (!raw) continue;
-      const id = normalizeZenModelId(this.baseUrl, raw);
-      if (!FREE_MODELS.includes(id) && raw !== this.defaultModel) continue;
-      if (!seen.has(id)) { seen.add(id); out.push(id); }
+  // Orden de proveedores: primero el configurado (Zen u otro compatible),
+  // luego Ollama local como respaldo gratuito. Así el asistente con
+  // herramientas (altas, ediciones, ajustes) funciona aunque la key free de
+  // Zen responda 403 fuera del runtime de OpenCode.
+  private providers(requested?: string): ChatProvider[] {
+    const out: ChatProvider[] = [];
+    if (this.apiKey) {
+      const seen = new Set<string>();
+      const models: string[] = [];
+      for (const raw of [requested, this.defaultModel, ...FREE_MODELS]) {
+        if (!raw) continue;
+        const id = normalizeZenModelId(this.baseUrl, raw);
+        if (!FREE_MODELS.includes(id) && raw !== this.defaultModel && raw !== requested) continue;
+        if (!seen.has(id)) { seen.add(id); models.push(id); }
+      }
+      out.push({ kind: 'zen', baseUrl: this.baseUrl, apiKey: this.apiKey, models });
+    }
+    if (this.ollamaBase) {
+      const seen = new Set<string>();
+      const models: string[] = [];
+      for (const raw of [requested, this.ollamaModel, ...OLLAMA_MODELS]) {
+        if (!raw) continue;
+        const id = raw.trim();
+        if (!seen.has(id)) { seen.add(id); models.push(id); }
+      }
+      out.push({ kind: 'ollama', baseUrl: this.ollamaBase, apiKey: process.env.OLLAMA_API_KEY || 'ollama', models });
     }
     return out;
   }
 
-  status() {
+  private chain(requested?: string) {
+    return this.providers(requested).flatMap((p) => p.models);
+  }
+
+  async status() {
+    const zenOk = Boolean(this.apiKey);
+    let ollamaOk = false;
+    if (this.ollamaBase) {
+      try {
+        const r = await fetch(`${this.ollamaBase}/models`, { signal: AbortSignal.timeout(8000) });
+        ollamaOk = r.ok;
+      } catch { ollamaOk = false; }
+    }
     return {
-      configured: Boolean(this.apiKey),
-      provider: 'OpenCode Zen (OpenAI-compatible)',
+      configured: zenOk || ollamaOk,
+      provider: 'OpenCode Zen (OpenAI-compatible) + Ollama local',
       model: this.defaultModel,
       fallbackModels: this.chain().slice(1, 4),
       baseUrl: this.baseUrl,
-      message: this.apiKey
+      activeProviders: [
+        ...(zenOk ? ['zen'] : []),
+        ...(ollamaOk ? ['ollama'] : []),
+      ],
+      ollama: { baseUrl: this.ollamaBase || null, model: this.ollamaModel, reachable: ollamaOk },
+      message: (zenOk || ollamaOk)
         ? 'Asistente configurado. Las recomendaciones son de solo lectura; los precios promocionales solo se aplican si tú los confirmas.'
-        : 'Configura OPENCODE_API_URL, OPENCODE_API_KEY y OPENCODE_MODEL como variables secretas en EasyPanel para habilitar el asistente.',
+        : 'Configura OPENCODE_API_KEY (o deja OLLAMA_URL apuntando al Ollama interno) para habilitar el asistente.',
     };
   }
 
-  async listFreeModels() {    if (this.modelsCache && Date.now() - this.modelsCache.at < 3600000) return { models: this.modelsCache.ids, cached: true };
-    if (!this.apiKey) throw new ServiceUnavailableException('El puente OpenCode no está configurado en el servidor.');
-    let response: Response;
-    try {
-      response = await fetch(`${this.baseUrl}/models`, { headers: { Authorization: `Bearer ${this.apiKey}` }, signal: AbortSignal.timeout(20000) });
-    } catch {
-      throw new ServiceUnavailableException('No se pudo conectar con OpenCode Zen.');
+  async listFreeModels() {
+    if (this.modelsCache && Date.now() - this.modelsCache.at < 3600000) return { models: this.modelsCache.ids, cached: true };
+    const ids: string[] = [];
+    for (const p of this.providers()) {
+      try {
+        const headers: Record<string, string> = p.kind === 'ollama' && p.apiKey === 'ollama' ? {} : { Authorization: `Bearer ${p.apiKey}` };
+        // Ollama /v1/models no exige auth; Zen sí.
+        const response = await fetch(`${p.baseUrl}/models`, { headers, signal: AbortSignal.timeout(20000) });
+        if (!response.ok) continue;
+        const data: any = await response.json();
+        for (const m of ((data?.data || []) as any[])) {
+          const id = String(m?.id || '').trim();
+          if (id && !ids.includes(id)) ids.push(id);
+        }
+      } catch { /* prueba el siguiente proveedor */ }
     }
-    if (!response.ok) throw new ServiceUnavailableException(`OpenCode Zen respondió HTTP ${response.status}.`);
-    const data: any = await response.json();
-    const ids: string[] = [...new Set(((data?.data || []) as any[]).map((m) => String(m?.id || '')).filter(Boolean))];
+    if (!ids.length && !this.apiKey && !this.ollamaBase) throw new ServiceUnavailableException('El puente OpenCode no está configurado en el servidor.');
     const free = ids.filter((id) => /free/i.test(id));
-    this.modelsCache = { at: Date.now(), ids: free.length ? free : FREE_MODELS };
+    const merged = [...new Set([...free, ...ids.filter((id) => OLLAMA_MODELS.includes(id)), ...FREE_MODELS.slice(0, 3)])];
+    this.modelsCache = { at: Date.now(), ids: merged.length ? merged : FREE_MODELS };
     return { models: this.modelsCache.ids, cached: false };
   }
 
   private async complete(system: string, prompt: string, requestedModel?: string, maxTokens = 1400) {
-    if (!this.apiKey) throw new ServiceUnavailableException('El puente OpenCode no está configurado en el servidor.');
+    const providers = this.providers(requestedModel);
+    if (!providers.length) throw new ServiceUnavailableException('El puente OpenCode no está configurado en el servidor.');
     const errors: string[] = [];
-    for (const model of this.chain(requestedModel)) {
-      let response: Response;
-      try {
-        response = await fetch(`${this.baseUrl}/chat/completions`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
-          body: JSON.stringify({
-            model, temperature: 0.2, max_tokens: maxTokens,
-            messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
-          }),
-          signal: AbortSignal.timeout(65000),
-        });
-      } catch {
-        errors.push(`${model}: sin conexión`);
-        continue;
+    for (const p of providers) {
+      for (const model of p.models) {
+        const tag = `${p.kind}:${model}`;
+        let response: Response;
+        try {
+          response = await fetch(`${p.baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...(p.kind === 'ollama' && p.apiKey === 'ollama' ? {} : { Authorization: `Bearer ${p.apiKey}` }) },
+            body: JSON.stringify({
+              model, temperature: 0.2, max_tokens: maxTokens,
+              messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
+            }),
+            signal: AbortSignal.timeout(90000),
+          });
+        } catch {
+          errors.push(`${tag}: sin conexión`);
+          continue;
+        }
+        if (response.status === 401 && p.kind === 'zen') throw new ServiceUnavailableException('La clave de OpenCode fue rechazada (HTTP 401). Revisa OPENCODE_API_KEY.');
+        if (response.status === 403) {
+          // La capa free de Zen solo responde dentro del runtime de OpenCode:
+          // se salta al siguiente proveedor (Ollama local) en vez de fallar.
+          errors.push(`${tag}: no disponible (403, pruebo siguiente proveedor)`);
+          continue;
+        }
+        if ([400, 404, 409, 410, 422, 429].includes(response.status)) {
+          errors.push(`${tag}: no disponible (${response.status})`);
+          continue;
+        }
+        if (!response.ok) throw new ServiceUnavailableException(`El proveedor ${p.kind} respondió HTTP ${response.status}.`);
+        const result: any = await response.json();
+        const content = result?.choices?.[0]?.message?.content;
+        if (typeof content === 'string' && content.trim()) return { model, text: content.trim() };
+        errors.push(`${tag}: respuesta vacía`);
       }
-      if (response.status === 401) throw new ServiceUnavailableException('La clave de OpenCode fue rechazada (HTTP 401). Revisa OPENCODE_API_KEY.');
-      if ([400, 403, 404, 409, 410, 422, 429].includes(response.status)) {
-        errors.push(`${model}: no disponible (${response.status})`);
-        continue;
-      }
-      if (!response.ok) throw new ServiceUnavailableException(`OpenCode Zen respondió HTTP ${response.status}.`);
-      const result: any = await response.json();
-      const content = result?.choices?.[0]?.message?.content;
-      if (typeof content === 'string' && content.trim()) return { model, text: content.trim() };
-      errors.push(`${model}: respuesta vacía`);
     }
     throw new ServiceUnavailableException(`Ningún modelo gratuito respondió. Detalle: ${errors.slice(0, 4).join(' | ')}`);
   }
