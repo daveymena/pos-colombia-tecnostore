@@ -128,9 +128,28 @@ export class AppController {
     const c = await this.context(auth); this.roles(c, ['ADMIN', 'MANAGER', 'INVENTORY', 'ACCOUNTANT']);
     return this.inventoryAi.status();
   }
-  @ApiBearerAuth() @Post('inventory/ai/insights') async inventoryAiInsights(@Headers('authorization') auth: string) {
+  @ApiBearerAuth() @Get('inventory/ai/models') async inventoryAiModels(@Headers('authorization') auth: string) {
     const c = await this.context(auth); this.roles(c, ['ADMIN', 'MANAGER', 'INVENTORY', 'ACCOUNTANT']);
-    return this.inventoryAi.inventoryInsights(c.companyId);
+    return this.inventoryAi.listFreeModels();
+  }
+  @ApiBearerAuth() @Post('inventory/ai/insights') async inventoryAiInsights(@Headers('authorization') auth: string, @Body() body: any) {
+    const c = await this.context(auth); this.roles(c, ['ADMIN', 'MANAGER', 'INVENTORY', 'ACCOUNTANT']);
+    return this.inventoryAi.inventoryInsights(c.companyId, body?.model);
+  }
+  @ApiBearerAuth() @Post('inventory/ai/restock') async inventoryAiRestock(@Headers('authorization') auth: string, @Body() body: any) {
+    const c = await this.context(auth); this.roles(c, ['ADMIN', 'MANAGER', 'INVENTORY', 'ACCOUNTANT']);
+    const coverDays = body?.coverDays === undefined ? 30 : Math.min(120, Math.max(7, Number(body.coverDays)));
+    if (!Number.isFinite(coverDays)) throw new BadRequestException('Días de cobertura inválidos.');
+    return this.inventoryAi.restockPlan(c.companyId, body?.model, coverDays);
+  }
+  @ApiBearerAuth() @Post('inventory/ai/pricing') async inventoryAiPricing(@Headers('authorization') auth: string, @Body() body: any) {
+    const c = await this.context(auth); this.roles(c, ['ADMIN', 'MANAGER', 'ACCOUNTANT']);
+    return this.inventoryAi.pricingReview(c.companyId, body?.model);
+  }
+  @ApiBearerAuth() @Post('inventory/ai/copy') async inventoryAiCopy(@Headers('authorization') auth: string, @Body() body: any) {
+    const c = await this.context(auth); this.roles(c, ['ADMIN', 'MANAGER', 'INVENTORY']);
+    if (!body?.productId) throw new BadRequestException('Selecciona un producto.');
+    return this.inventoryAi.productCopy(c.companyId, String(body.productId), body?.model);
   }
 
   @ApiBearerAuth() @Get('sales') async sales(@Headers('authorization') auth: string, @Query() query: any) { const c = await this.context(auth); return this.service.listSales(c.companyId, query); }

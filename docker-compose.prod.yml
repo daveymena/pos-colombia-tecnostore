@@ -25,7 +25,7 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:?Define CORS_ORIGIN con el dominio del frontend}
       OPENCODE_API_URL: ${OPENCODE_API_URL:-https://opencode.ai/zen/v1}
       OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}
-      OPENCODE_MODEL: ${OPENCODE_MODEL:-deepseek-v4-flash-free}
+      OPENCODE_MODEL: ${OPENCODE_MODEL:-mimo-v2.6-flash-free}
       ENABLE_SWAGGER: ${ENABLE_SWAGGER:-false}
       PORT: 3000
       NODE_ENV: production

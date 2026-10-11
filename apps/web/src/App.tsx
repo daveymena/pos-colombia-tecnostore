@@ -363,8 +363,13 @@ function ModuleView({page,data,rows,search,setSearch,openCreate,openAction,colum
   const [inventoryAiStatus,setInventoryAiStatus]=useState<any>(null);
   const [inventoryAiResult,setInventoryAiResult]=useState<any>(null);
   const [inventoryAiError,setInventoryAiError]=useState('');
+  const [inventoryAiTask,setInventoryAiTask]=useState('insights');
+  const [inventoryAiModel,setInventoryAiModel]=useState('');
+  const [inventoryAiModels,setInventoryAiModels]=useState<string[]>([]);
+  const [inventoryAiCover,setInventoryAiCover]=useState('30');
+  const [inventoryAiProduct,setInventoryAiProduct]=useState('');
   useEffect(()=>{
-    if(page==='Inventario') request('/inventory/ai/status').then(setInventoryAiStatus).catch(()=>setInventoryAiStatus({configured:false}));
+    if(page==='Inventario') { request('/inventory/ai/status').then((s:any)=>{setInventoryAiStatus(s); if(s?.model) setInventoryAiModel(cur=>cur||'');}).catch(()=>setInventoryAiStatus({configured:false})); request('/inventory/ai/models').then((m:any)=>{ if(Array.isArray(m?.models)) setInventoryAiModels(m.models); }).catch(()=>{}); }
   },[page,request]);
   async function importCsv(file:File) {
     setLocalBusy(true);setLocalMessage('');
@@ -410,8 +415,21 @@ function ModuleView({page,data,rows,search,setSearch,openCreate,openAction,colum
   }
   async function runInventoryAi() {
     setLocalBusy(true);setInventoryAiError('');setInventoryAiResult(null);
-    try { setInventoryAiResult(await request('/inventory/ai/insights',{method:'POST',body:'{}'})); }
+    try {
+      const body:any={}; if(inventoryAiModel) body.model=inventoryAiModel;
+      if(inventoryAiTask==='restock') body.coverDays=Number(inventoryAiCover)||30;
+      if(inventoryAiTask==='copy') { if(!inventoryAiProduct) throw new Error('Selecciona un producto para generar su descripción.'); body.productId=inventoryAiProduct; }
+      const result=await request(`/inventory/ai/${inventoryAiTask}`,{method:'POST',body:JSON.stringify(body)});
+      setInventoryAiResult({kind:inventoryAiTask,...result});
+    }
     catch(e:any) { setInventoryAiError(e.message||'El asistente no está disponible.'); }
+    finally { setLocalBusy(false); }
+  }
+  async function applyPromo(productId:string, price:number) {
+    if(!window.confirm(`¿Aplicar precio promocional de ${money(price)}? Se puede quitar editando el producto.`)) return;
+    setLocalBusy(true);setInventoryAiError('');
+    try { await request(`/products/${productId}`,{method:'PATCH',body:JSON.stringify({promoPrice:price})}); setLocalMessage('Precio promocional aplicado.'); await loadPage(page); await loadPage('Dashboard'); }
+    catch(e:any) { setInventoryAiError(e.message||'No se pudo aplicar la promoción.'); }
     finally { setLocalBusy(false); }
   }
   const headers=columns[page]||[];
@@ -436,8 +454,19 @@ function ModuleView({page,data,rows,search,setSearch,openCreate,openAction,colum
           <input ref={inventoryImportRef} type="file" accept=".xlsx,.docx,.csv,.txt,.tsv,.json" hidden onChange={e=>{const f=e.target.files?.[0];if(f)previewInventoryFile(f);}}/>
           <button className="primary" disabled={localBusy} onClick={()=>inventoryImportRef.current?.click()}><Upload size={16}/>{localBusy?'Leyendo…':'Importar conteo'}</button>
           <div className="export-buttons"><span className="small muted">Exportar</span>{(['xlsx','docx','txt'] as const).map(f=><button key={f} className="secondary compact-format" disabled={localBusy} onClick={async()=>{try{await downloadFile(`/inventory/export?format=${f}`,`inventario-conteo.${f}`);}catch(e:any){setLocalMessage(e.message||'No se pudo exportar el inventario.');}}}>{f==='xlsx'?'Excel':f==='docx'?'Word':'Texto'}</button>)}</div>
-          <button className="secondary ai-button" disabled={localBusy||!inventoryAiStatus?.configured} title={inventoryAiStatus?.configured?'Analiza rotación, mínimos y riesgos sin cambiar stock':'Configura el puente OpenCode en el servidor para habilitar IA'} onClick={runInventoryAi}><Sparkles size={16}/>{localBusy?'Analizando…':'Análisis IA'}</button>
+          <button className="secondary ai-button" disabled={localBusy||!inventoryAiStatus?.configured} title={inventoryAiStatus?.configured?'Analiza rotación, mínimos y riesgos sin cambiar stock':'Configura el puente OpenCode en el servidor para habilitar IA'} onClick={runInventoryAi}><Sparkles size={16}/>{localBusy?'Analizando…':'Asistente IA'}</button>
         </div>
+        {inventoryAiStatus?.configured&&<div className="ai-taskbar">
+          <div className="ai-tasks">{[['insights','Análisis'],['restock','Reposición'],['pricing','Precios'],['copy','Descripción']].map(([v,l])=><button key={v} className={`ai-task${inventoryAiTask===v?' active':''}`} onClick={()=>{setInventoryAiTask(v);setInventoryAiResult(null);setInventoryAiError('');}}>{l}</button>)}</div>
+          <div className="ai-options">
+            <select value={inventoryAiModel} onChange={e=>setInventoryAiModel(e.target.value)} title="Modelo gratuito">
+              <option value="">Modelo: {inventoryAiStatus?.model||'auto'}</option>
+              {inventoryAiModels.map(m=><option key={m} value={m}>{m}</option>)}
+            </select>
+            {inventoryAiTask==='restock'&&<label className="ai-cover">Cobertura <input type="number" min={7} max={120} value={inventoryAiCover} onChange={e=>setInventoryAiCover(e.target.value)}/> días</label>}
+            {inventoryAiTask==='copy'&&<select value={inventoryAiProduct} onChange={e=>setInventoryAiProduct(e.target.value)}><option value="">Selecciona producto…</option>{(dataAll?.products||[]).map((p:any)=><option key={p.id} value={p.id}>{p.name} ({p.sku})</option>)}</select>}
+          </div>
+        </div>}
         {!inventoryAiStatus?.configured&&<p className="field-help inventory-ai-hint">IA pendiente de configuración del puente OpenCode en EasyPanel. La importación y el resto del POS funcionan sin IA.</p>}
       </section>
       {inventoryPreview&&<section className="panel inventory-preview">
@@ -446,7 +475,12 @@ function ModuleView({page,data,rows,search,setSearch,openCreate,openAction,colum
         <div className="preview-footer"><p className="field-help">Se aplicarán solo filas válidas; las filas con error se omiten. Si un saldo cambia después de esta vista previa, se cancela toda la operación y deberás importar de nuevo.</p><button className="primary" disabled={localBusy||inventoryPreview.valid===0} onClick={applyInventoryFile}><CheckCircle2 size={16}/>{localBusy?'Aplicando…':`Aplicar ${inventoryPreview.valid} filas válidas`}</button></div>
       </section>}
       {inventoryAiError&&<div className="error banner">{inventoryAiError}<button onClick={()=>setInventoryAiError('')}>Cerrar</button></div>}
-      {inventoryAiResult&&<section className="panel inventory-ai-result"><div className="panel-head"><div><p className="eyebrow">ASISTENTE DE INVENTARIO · SOLO LECTURA</p><h3>Oportunidades y alertas</h3></div><button className="text-btn" onClick={()=>setInventoryAiResult(null)}>Cerrar</button></div><div className="ai-metrics"><span>{inventoryAiResult.metrics?.inventoryRows} referencias</span><span>Valor costo {money(inventoryAiResult.metrics?.inventoryCostValueCOP)}</span><span>{inventoryAiResult.metrics?.belowMinimumCount} en mínimo o por debajo</span></div><p className="ai-analysis">{inventoryAiResult.analysis}</p><p className="field-help">La IA propone; no modifica productos, compras ni existencias.</p></section>}
+      {inventoryAiResult&&<section className="panel inventory-ai-result"><div className="panel-head"><div><p className="eyebrow">ASISTENTE DE INVENTARIO · {inventoryAiResult.model||''}</p><h3>{inventoryAiResult.kind==='restock'?'Plan de reposición':inventoryAiResult.kind==='pricing'?'Precios y promociones':inventoryAiResult.kind==='copy'?'Descripción comercial':'Oportunidades y alertas'}</h3></div><button className="text-btn" onClick={()=>setInventoryAiResult(null)}>Cerrar</button></div>
+      {inventoryAiResult.kind==='insights'&&<div className="ai-metrics"><span>{inventoryAiResult.metrics?.inventoryRows} referencias</span><span>Valor costo {money(inventoryAiResult.metrics?.inventoryCostValueCOP)}</span><span>{inventoryAiResult.metrics?.belowMinimumCount} en mínimo o por debajo</span></div>}
+      {inventoryAiResult.kind==='restock'&&<><div className="ai-metrics"><span>Cobertura {inventoryAiResult.coverDays} días</span><span>Costo estimado {money(inventoryAiResult.totalOrderCostCOP)}</span><span>{(inventoryAiResult.lines||[]).length} líneas</span></div><div className="table-wrap"><table><thead><tr><th>SKU</th><th>Producto</th><th>Stock</th><th>Días cobert.</th><th>Pedir</th><th>Costo</th></tr></thead><tbody>{(inventoryAiResult.lines||[]).slice(0,20).map((l:any)=><tr key={l.productId+l.warehouse}><td>{l.sku}</td><td>{l.name}</td><td>{l.stock}</td><td>{l.daysOfCover??'—'}</td><td><b>{l.suggestedOrder}</b></td><td>{money(l.orderCostCOP)}</td></tr>)}</tbody></table></div></>}
+      {inventoryAiResult.kind==='pricing'&&<div className="table-wrap"><table><thead><tr><th>SKU</th><th>Producto</th><th>Margen</th><th>Precio</th><th>Promo sugerida</th><th></th></tr></thead><tbody>{(inventoryAiResult.promoCandidates||[]).map((c:any)=><tr key={c.productId}><td>{c.sku}</td><td>{c.name}</td><td>{c.marginPct}%</td><td>{money(c.priceCOP)}</td><td><b>{money(c.suggestedPromoCOP)}</b></td><td><button className="table-action" disabled={localBusy} onClick={()=>applyPromo(c.productId,c.suggestedPromoCOP)}>Aplicar</button></td></tr>)}</tbody></table>{!(inventoryAiResult.promoCandidates||[]).length&&<p className="field-help">Sin candidatas a promoción con los criterios actuales.</p>}</div>}
+      {inventoryAiResult.kind==='copy'&&<><p className="small muted">SKU {inventoryAiResult.sku}</p></>}
+      <p className="ai-analysis">{inventoryAiResult.analysis||inventoryAiResult.copy}</p><p className="field-help">La IA propone; no modifica productos, compras ni existencias. Las promociones solo se aplican si las confirmas.</p></section>}
     </>}
     {page==='Configuración'&&data&&!Array.isArray(data)&&<section className="panel company-details"><div className="company-initial">{(data.name||'N').slice(0,1)}</div><div className="company-info"><h2>{data.name||'Empresa sin nombre'}</h2><p>{data.taxId||'NIT sin configurar'} · {data.currency||'COP'} · {data.timezone||'America/Bogota'}</p><p>{data.email||'Correo pendiente'} · {data.phone||'Teléfono pendiente'}</p><p>{data.address||'Dirección pendiente'}</p></div></section>}
     {page==='Facturación electrónica'&&<section className="panel invoice-status"><div className="invoice-icon"><FileText size={25}/></div><div><span className="pill warning">{data?.status||'NOT_CONFIGURED'}</span><h2>Integración no configurada</h2><p>{data?.message||'Debe configurarse un proveedor autorizado, credenciales, numeración y entorno de pruebas antes de emitir documentos fiscales.'}</p><p className="field-help">Esta versión no genera ni valida facturas electrónicas DIAN. Los recibos POS comerciales no reemplazan una factura electrónica validada.</p></div></section>}
