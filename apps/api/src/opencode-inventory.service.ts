@@ -3,16 +3,17 @@ import { PrismaService } from './prisma.service';
 
 // Modelos gratuitos verificados en OpenCode Zen (sufijo -free, 2026-10-11).
 // DeepSeek libre ya no existe: no usar deepseek-v4-flash-free.
+// Orden: primero los más capaces (razonamiento + seguimiento de instrucciones JSON).
 const FREE_MODELS = [
-  'mimo-v2.6-flash-free',
-  'nemotron-3.5-lightning-free',
-  'nemotron-3-ultra-free',
   'muse-spark-1.3-contributor-free',
   'muse-spark-1.2-contributor-free',
-  'ling-3.1-flash-free',
-  'ling-3.0-flash-fin-free',
+  'nemotron-3-ultra-free',
   'step-5-preview-free',
+  'ling-3.1-flash-free',
+  'nemotron-3.5-lightning-free',
+  'ling-3.0-flash-fin-free',
   'longcat-2.5-preview-free',
+  'mimo-v2.6-flash-free',
   'space-bunny-free',
   'exo-free',
   'jev-1.13-free',
@@ -21,7 +22,7 @@ const FREE_MODELS = [
 @Injectable()
 export class OpenCodeInventoryService {
   private readonly serverUrl = (process.env.OPENCODE_SERVER_URL || 'http://opencode1_oc-zen:4000').replace(/\/+$/, '');
-  private readonly defaultModel = process.env.OPENCODE_MODEL || 'mimo-v2.6-flash-free';
+  private readonly defaultModel = process.env.OPENCODE_MODEL || 'muse-spark-1.3-contributor-free';
   private readonly groqUrl = (process.env.GROQ_API_URL || 'https://api.groq.com/openai/v1').replace(/\/+$/, '');
   private readonly groqKey = process.env.GROQ_API_KEY || '';
   private readonly groqModel = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
